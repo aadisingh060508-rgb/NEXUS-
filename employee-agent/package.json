@@ -1,0 +1,24 @@
+{
+  "name": "employee-agent",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n \"UI,SERVER\" -c \"cyan,yellow\" \"vite\" \"node --watch server.js\"",
+    "build": "vite build",
+    "build:go": "go build -o fsmonitor.exe .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "concurrently": "^9.1.0",
+    "express": "^5.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.5.2",
+    "vite": "^6.3.5"
+  }
+}

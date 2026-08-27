@@ -63,6 +63,7 @@ export default function App() {
   const [stats, setStats] = useState(getInitialStats())
   const [bumpKey, setBumpKey] = useState(null)
   const [toast, setToast] = useState(null)
+
   const [view, setView] = useState('overview')
   const [selectedEmployee, setSelectedEmployee] = useState(null)
 
@@ -279,9 +280,6 @@ export default function App() {
 
         handleWsEvent(event)
 
-        // CURRENT_DRIVES: display-only snapshot of already-plugged drives.
-        // Do NOT call processEvent here — these drives are already known to the server;
-        // we only want real plug/unplug moments to create log entries.
         if (event.type === 'CURRENT_DRIVES' && Array.isArray(event.drives)) {
           setConnectedDrives(event.drives)
           return
@@ -348,7 +346,6 @@ export default function App() {
     }
   }
 
-
   // ── Clear Logs (From DB and State) ──
   const handleClear = async () => {
     try {
@@ -398,9 +395,6 @@ export default function App() {
   const monitoredPathsCount = grouped?.drives?.length || 1
   const lastActivity = logs.length ? (logs[logs.length - 1].timestamp || 'Just now') : '—'
 
-  // The one real, live device in this app — represented as an "employee"
-  // row so it can sit alongside the mock directory on the Overview/Employees
-  // pages (see mockData.js for the rest of the stand-in roster).
   const realEmployee = {
     id: 'real',
     name: (user.email || 'admin').split('@')[0],
@@ -433,266 +427,261 @@ export default function App() {
       <Sidebar view={view} onNavigate={(v) => { setSelectedEmployee(null); setView(v) }} />
 
       <div className="app-content">
-      {view === 'overview' && (
-        <OverviewPage
-          user={user}
-          employees={allEmployees}
-          onViewEmployee={handleViewEmployee}
-          recentActivity={recentActivityFeed}
-        />
-      )}
+        {view === 'overview' && (
+          <OverviewPage
+            user={user}
+            employees={allEmployees}
+            onViewEmployee={handleViewEmployee}
+            recentActivity={recentActivityFeed}
+            logs={logs}
+          />
+        )}
 
-      {view === 'employees' && (
-        <EmployeesPage employees={allEmployees} onViewEmployee={handleViewEmployee} />
-      )}
+        {view === 'employees' && (
+          <EmployeesPage employees={allEmployees} onViewEmployee={handleViewEmployee} />
+        )}
 
-      {view === 'website' && (
-        <WebsiteMonitoring
-          stats={MOCK_WEBSITE_STATS}
-          activity={MOCK_WEBSITE_ACTIVITY}
-          recent={MOCK_RECENT_WEBSITE_ACTIVITY}
-        />
-      )}
+        {view === 'website' && (
+          <WebsiteMonitoring
+            stats={MOCK_WEBSITE_STATS}
+            activity={MOCK_WEBSITE_ACTIVITY}
+            recent={MOCK_RECENT_WEBSITE_ACTIVITY}
+          />
+        )}
 
-      {view === 'admin' && selectedEmployee && (
-        <AdminDetail
-          employee={selectedEmployee}
-          recentActivity={MOCK_ACTIVITY_BY_EMPLOYEE[selectedEmployee.id] || []}
-          onBack={() => { setSelectedEmployee(null); setView('employees') }}
-        />
-      )}
+        {view === 'admin' && selectedEmployee && (
+          <AdminDetail
+            employee={selectedEmployee}
+            recentActivity={MOCK_ACTIVITY_BY_EMPLOYEE[selectedEmployee.id] || []}
+            onBack={() => { setSelectedEmployee(null); setView('employees') }}
+          />
+        )}
 
-      {view === 'dashboard' && (
-    <div className="app">
-      {/* ── Toast Notification Popup (Upper Middle) ── */}
-      {toast && (
-        <div className={`toast-notification ${toast.type}`}>
-          <div className="toast-icon">
-            {toast.type === 'on' ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            ) : (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="6" y="4" width="4" height="16"></rect>
-                <rect x="14" y="4" width="4" height="16"></rect>
-              </svg>
+        {view === 'dashboard' && (
+          <div className="app">
+            {/* ── Toast Notification Popup (Upper Middle) ── */}
+            {toast && (
+              <div className={`toast-notification ${toast.type}`}>
+                <div className="toast-icon">
+                  {toast.type === 'on' ? (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="6" y="4" width="4" height="16"></rect>
+                      <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                  )}
+                </div>
+                <div className="toast-content">
+                  <div className="toast-title">{toast.title}</div>
+                  <div className="toast-desc">{toast.desc}</div>
+                </div>
+                <button className="toast-close" onClick={() => setToast(null)}>×</button>
+              </div>
             )}
-          </div>
-          <div className="toast-content">
-            <div className="toast-title">{toast.title}</div>
-            <div className="toast-desc">{toast.desc}</div>
-          </div>
-          <button className="toast-close" onClick={() => setToast(null)}>×</button>
-        </div>
-      )}
 
-      {/* ── Header ── */}
-      <header className="header">
-        <div className="header-left">
-          <svg className="logo-icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-            <polyline points="13 2 13 9 20 9"/>
-          </svg>
-          <div>
-            <h1>ITR File Monitor</h1>
-            <span className="font-mono-label">SYSTEM / FS_ACTIVITY_MONITOR</span>
-          </div>
-        </div>
+            {/* ── Header ── */}
+            <header className="header">
+              <div className="header-left">
+                <button className="back-btn" onClick={() => setView('overview')} title="Back to Overview" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', marginRight: '8px' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                  </svg>
+                </button>
+                <svg className="logo-icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+                  <polyline points="13 2 13 9 20 9"/>
+                </svg>
+                <div>
+                  <h1 style={{ textTransform: 'capitalize' }}>{(user?.email || 'User').split('@')[0]}</h1>
+                  <span className="font-mono-label">FS_ACTIVITY_MONITOR</span>
+                </div>
+              </div>
 
-        <div className="header-right">
-          {/* User Email Badge */}
-          <div className="user-profile-badge" title={`Signed in as ${user.email}`}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-              <circle cx="12" cy="7" r="4"></circle>
-            </svg>
-            <span className="user-email-text">{user.email}</span>
-          </div>
+              <div className="header-right">
+                <div className="user-profile-badge" title={`Signed in as ${user.email}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                  </svg>
+                  <span className="user-email-text">{user.email}</span>
+                </div>
 
-          <div className={`status-badge ${connectionState}`}>
-            <span className="status-dot" />
-            <span className="status-text">{connectionLabel}</span>
-          </div>
+                <div className={`status-badge ${connectionState}`}>
+                  <span className="status-dot" />
+                  <span className="status-text">{connectionLabel}</span>
+                </div>
 
-          <div className="toggle-wrapper">
-            <span className={`toggle-label ${tracking ? 'active' : ''}`}>
-              {tracking ? 'Tracking On' : 'Tracking Off'}
-            </span>
-            <button
-              className={`toggle-btn ${tracking ? 'active' : ''}`}
-              onClick={handleToggle}
-              role="switch"
-              aria-checked={tracking}
-              aria-label="Toggle tracking"
-            >
-              <span className="toggle-knob" />
-            </button>
-          </div>
+                <div className="toggle-wrapper">
+                  <span className={`toggle-label ${tracking ? 'active' : ''}`}>
+                    {tracking ? 'Tracking On' : 'Tracking Off'}
+                  </span>
+                  <button
+                    className={`toggle-btn ${tracking ? 'active' : ''}`}
+                    onClick={handleToggle}
+                    role="switch"
+                    aria-checked={tracking}
+                    aria-label="Toggle tracking"
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </div>
 
-          <button className="signout-btn" onClick={handleSignOut} title="Sign Out">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16 17 21 12 16 7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </header>
+                <button className="signout-btn" onClick={handleSignOut} title="Sign Out">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                  </svg>
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </header>
 
-      {/* ── Stats Bar ── */}
-      <section className="stats-bar-section">
-        <div className="stats-bar-heading">
-          <span className="section-marker"><span className="marker-index">/02</span> ACTIVITY_COUNTERS</span>
-        </div>
-        <div className="stats-bar">
-          <div className={`stat-card stat-card-primary ${bumpKey === 'total' || bumpKey ? 'bump' : ''}`}>
-            <div className="stat-value">{stats.total}</div>
-            <div className="stat-label">Total</div>
-          </div>
-          {EVENT_TYPES.map(type => (
-            <div key={type} className={`stat-card ${bumpKey === type ? 'bump' : ''}`}>
-              <div className="stat-value">{stats[type] || 0}</div>
-              <div className="stat-label">{STAT_LABELS[type] || type}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <DirectoryMonitor
-        tracking={tracking}
-        grouped={grouped}
-        pending={pending}
-        errors={errors}
-        isDirWatched={isDirWatched}
-        onToggle={toggleDirectory}
-      />
-
-      {/* ── Log Feed ── */}
-      <section className="log-feed">
-        <div className="section-header">
-          <div>
-            <span className="section-marker"><span className="marker-index">/04</span> ACTIVITY_LOG</span>
-            <h2 style={{ marginTop: '4px' }}>Activity Log History (Persisted)</h2>
-          </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="action-btn" onClick={handleClear} title="Clear history and delete records">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-              Clear History
-            </button>
-          </div>
-        </div>
-
-        <div className="log-container" ref={logContainerRef} onScroll={handleScroll}>
-          {logs.length === 0 ? (
-            <div className="empty-state">
-              <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.25">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              <p>No activity logs recorded. Turn Tracking ON or insert a pen drive to capture events.</p>
-            </div>
-          ) : (
-            <div className="log-list">
-              {logs.map((event) => {
-                const type = (event.type || 'INFO').toUpperCase()
-                const isUsbEvent = type === 'PEN_DRIVE_INSERT' || type === 'PEN_DRIVE_EJECT' || type === 'USB_INSERT' || type === 'USB_EJECT'
-                const hasSourceDest = (type === 'MOVE' || type === 'COPY') && (event.source && event.destination)
-
-                // 1. USB Pen Drive Insert / Eject Event
-                if (isUsbEvent) {
-                  const isInsert = type.includes('INSERT')
-                  const driveTarget = event.file || event.destination || event.source || 'Removable Drive'
-
-                  return (
-                    <div key={event.id} className="log-entry log-entry-usb external">
-                      <span className="log-timestamp">{event.timestamp}</span>
-                      <span className="log-type-badge" data-type={type}>
-                        {isInsert ? 'USB INSERT' : 'USB EJECT'}
-                      </span>
-
-                      <div className="log-path-card single-card usb-card" title={driveTarget}>
-                        <span className="path-chip usb-chip">
-                          {isInsert ? 'PEN DRIVE CONNECTED' : 'PEN DRIVE REMOVED'}
-                        </span>
-                        <span className="path-text">{driveTarget}</span>
-                        {event.message && <span className="path-meta">{event.message}</span>}
-                      </div>
-
-                      <div className="log-trailing-info">
-                        <span className="usb-badge highlight">USB</span>
-                      </div>
-                    </div>
-                  )
-                }
-
-                // 2. Transfer Operations (MOVE, COPY)
-                if (hasSourceDest) {
-                  return (
-                    <div key={event.id} className={`log-entry log-entry-transfer ${event.isExternal ? 'external' : ''}`}>
-                      <span className="log-timestamp">{event.timestamp}</span>
-
-                      {/* Left: Source File */}
-                      <div className="log-path-card source-card" title={event.source}>
-                        <span className="path-chip source-chip">SOURCE</span>
-                        <span className="path-text">{event.source}</span>
-                      </div>
-
-                      {/* Center: Action Badge with Arrow */}
-                      <div className="transfer-action-col">
-                        <span className="log-type-badge" data-type={type}>{type}</span>
-                        <svg className="transfer-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="5" y1="12" x2="19" y2="12"></line>
-                          <polyline points="12 5 19 12 12 19"></polyline>
-                        </svg>
-                      </div>
-
-                      {/* Right: Destination File */}
-                      <div className="log-path-card destination-card" title={event.destination}>
-                        <span className="path-chip destination-chip">DESTINATION</span>
-                        <span className="path-text">{event.destination}</span>
-                      </div>
-
-                      {/* Trailing: Size & External badge */}
-                      <div className="log-trailing-info">
-                        {event.size && <span className="log-size">{event.size}</span>}
-                        {event.isExternal && <span className="usb-badge highlight">USB</span>}
-                      </div>
-                    </div>
-                  )
-                }
-
-                // 3. Single Target Operations (CREATE, DELETE, MODIFY, RENAME)
-                const targetPath = event.file || event.destination || event.source || ''
-                return (
-                  <div key={event.id} className={`log-entry log-entry-single ${event.isExternal ? 'external' : ''}`}>
-                    <span className="log-timestamp">{event.timestamp}</span>
-                    <span className="log-type-badge" data-type={type}>{type}</span>
-
-                    <div className="log-path-card single-card" title={targetPath}>
-                      <span className="path-chip target-chip">
-                        {type === 'DELETE' ? 'DELETED' : type === 'CREATE' ? 'NEW FILE' : type === 'MODIFY' ? 'MODIFIED' : 'FILE'}
-                      </span>
-                      <span className="path-text">{targetPath}</span>
-                      {event.message && <span className="path-meta">{event.message}</span>}
-                    </div>
-
-                    <div className="log-trailing-info">
-                      {event.size && <span className="log-size">{event.size}</span>}
-                      {event.isExternal && <span className="usb-badge highlight">USB</span>}
-                    </div>
+            {/* ── Stats Bar ── */}
+            <section className="stats-bar-section">
+              <div className="stats-bar">
+                <div className={`stat-card stat-card-primary ${bumpKey === 'total' || bumpKey ? 'bump' : ''}`}>
+                  <div className="stat-value">{stats.total}</div>
+                  <div className="stat-label">Total</div>
+                </div>
+                {EVENT_TYPES.map(type => (
+                  <div key={type} className={`stat-card ${bumpKey === type ? 'bump' : ''}`}>
+                    <div className="stat-value">{stats[type] || 0}</div>
+                    <div className="stat-label">{STAT_LABELS[type] || type}</div>
                   </div>
-                )
-              })}
-              <div ref={logEndRef} />
-            </div>
-          )}
-        </div>
-      </section>
-    </div>
-      )}
+                ))}
+              </div>
+            </section>
+
+            <DirectoryMonitor
+              tracking={tracking}
+              grouped={grouped}
+              pending={pending}
+              errors={errors}
+              isDirWatched={isDirWatched}
+              onToggle={toggleDirectory}
+            />
+
+            {/* ── Log Feed ── */}
+            <section className="log-feed">
+              <div className="section-header">
+                <div>
+                  <h2>Activity Log History (Persisted)</h2>
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button className="action-btn clear-history-btn" onClick={handleClear} title="Clear history and delete records">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    Clear History
+                  </button>
+                </div>
+              </div>
+
+              <div className="log-container" ref={logContainerRef} onScroll={handleScroll}>
+                {logs.length === 0 ? (
+                  <div className="empty-state">
+                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.25">
+                      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    <p>No activity logs recorded. Turn Tracking ON or insert a pen drive to capture events.</p>
+                  </div>
+                ) : (
+                  <div className="log-list">
+                    {logs.map((event) => {
+                      const type = (event.type || 'INFO').toUpperCase()
+                      const isUsbEvent = type === 'PEN_DRIVE_INSERT' || type === 'PEN_DRIVE_EJECT' || type === 'USB_INSERT' || type === 'USB_EJECT'
+                      const hasSourceDest = (type === 'MOVE' || type === 'COPY') && (event.source && event.destination)
+
+                      if (isUsbEvent) {
+                        const isInsert = type.includes('INSERT')
+                        const driveTarget = event.file || event.destination || event.source || 'Removable Drive'
+
+                        return (
+                          <div key={event.id} className="log-entry log-entry-usb external">
+                            <span className="log-timestamp">{event.timestamp}</span>
+                            <span className="log-type-badge" data-type={type}>
+                              {isInsert ? 'USB INSERT' : 'USB EJECT'}
+                            </span>
+
+                            <div className="log-path-card single-card usb-card" title={driveTarget}>
+                              <span className="path-chip usb-chip">
+                                {isInsert ? 'PEN DRIVE CONNECTED' : 'PEN DRIVE REMOVED'}
+                              </span>
+                              <span className="path-text">{driveTarget}</span>
+                              {event.message && <span className="path-meta">{event.message}</span>}
+                            </div>
+
+                            <div className="log-trailing-info">
+                              <span className="usb-badge highlight">USB</span>
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      if (hasSourceDest) {
+                        return (
+                          <div key={event.id} className={`log-entry log-entry-transfer ${event.isExternal ? 'external' : ''}`}>
+                            <span className="log-timestamp">{event.timestamp}</span>
+
+                            <div className="log-path-card source-card" title={event.source}>
+                              <span className="path-chip source-chip">SOURCE</span>
+                              <span className="path-text">{event.source}</span>
+                            </div>
+
+                            <div className="transfer-action-col">
+                              <span className="log-type-badge" data-type={type}>{type}</span>
+                              <svg className="transfer-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                                <polyline points="12 5 19 12 12 19"></polyline>
+                              </svg>
+                            </div>
+
+                            <div className="log-path-card destination-card" title={event.destination}>
+                              <span className="path-chip destination-chip">DESTINATION</span>
+                              <span className="path-text">{event.destination}</span>
+                            </div>
+
+                            <div className="log-trailing-info">
+                              {event.size && <span className="log-size">{event.size}</span>}
+                              {event.isExternal && <span className="usb-badge highlight">USB</span>}
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      const targetPath = event.file || event.destination || event.source || ''
+                      return (
+                        <div key={event.id} className={`log-entry log-entry-single ${event.isExternal ? 'external' : ''}`}>
+                          <span className="log-timestamp">{event.timestamp}</span>
+                          <span className="log-type-badge" data-type={type}>{type}</span>
+
+                          <div className="log-path-card single-card" title={targetPath}>
+                            <span className="path-chip target-chip">
+                              {type === 'DELETE' ? 'DELETED' : type === 'CREATE' ? 'NEW FILE' : type === 'MODIFY' ? 'MODIFIED' : 'FILE'}
+                            </span>
+                            <span className="path-text">{targetPath}</span>
+                            {event.message && <span className="path-meta">{event.message}</span>}
+                          </div>
+
+                          <div className="log-trailing-info">
+                            {event.size && <span className="log-size">{event.size}</span>}
+                            {event.isExternal && <span className="usb-badge highlight">USB</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    <div ref={logEndRef} />
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </div>
   )
