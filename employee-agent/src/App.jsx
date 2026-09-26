@@ -2,6 +2,24 @@ import { useState, useEffect } from 'react';
 import { getSupabaseClient } from './supabaseClient';
 import Auth from './Auth';
 
+// Bridge the browser session to the Node.js server
+async function bridgeSessionToServer(session) {
+  if (!session?.access_token || !session?.refresh_token) return;
+  try {
+    await fetch('http://localhost:3001/api/bootstrap-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      }),
+    });
+    console.log('[App] Session bridged to server successfully.');
+  } catch (err) {
+    console.error('[App] Failed to bridge session to server:', err);
+  }
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [adminId, setAdminId] = useState(null);
@@ -12,36 +30,60 @@ export default function App() {
 
   useEffect(() => {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      supabase.auth.getUser().then(async ({ data: { user } }) => {
-        if (user) {
-          setUser(user);
-          // Ensure user exists in users table
-          const { error: upsertErr } = await supabase.from('users').upsert({
-            id: user.id,
-            email: user.email,
-            full_name: user.email ? user.email.split('@')[0] : 'Unknown',
-            is_active: true
-          }, { onConflict: 'id' });
-          if (upsertErr) console.error('UPSERT ERROR:', upsertErr);
-          else console.log('Upsert result: OK');
+    if (!supabase) return;
 
-          const { data } = await supabase.from('users').select('admin_id').eq('id', user.id).single();
-          if (data) setAdminId(data.admin_id);
+    // Check initial session
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user);
+
+        // Bridge session to Node server
+        await bridgeSessionToServer(session);
+
+        // Ensure user exists in users table
+        const { error: upsertErr } = await supabase.from('users').upsert({
+          id: session.user.id,
+          email: session.user.email,
+          full_name: session.user.email ? session.user.email.split('@')[0] : 'Unknown',
+          is_active: true
+        }, { onConflict: 'id' });
+        if (upsertErr) console.error('UPSERT ERROR:', upsertErr);
+        else console.log('Upsert result: OK');
+
+        const { data } = await supabase.from('users').select('admin_id').eq('id', session.user.id).single();
+        if (data) setAdminId(data.admin_id);
+      }
+    });
+
+    // Listen for auth state changes — bridge session on every SIGNED_IN / TOKEN_REFRESHED
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+
+        // Bridge session to server on sign-in and token refresh
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          await bridgeSessionToServer(session);
         }
-      });
-    }
-  }, []);
 
-  useEffect(() => {
-    if (user) {
-      fetch('http://localhost:3001/api/set-employee', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee_id: user.id })
-      }).catch(err => console.error('Failed to set active employee:', err));
-    }
-  }, [user]);
+        // Also set employee id on the server (legacy endpoint, still used for command routing)
+        fetch('http://localhost:3001/api/set-employee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employee_id: session.user.id })
+        }).catch(err => console.error('Failed to set active employee:', err));
+
+        const { data } = await supabase.from('users').select('admin_id').eq('id', session.user.id).single();
+        if (data) setAdminId(data.admin_id);
+      } else {
+        setUser(null);
+        setAdminId(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const handleConnectAdmin = async (e) => {
     e.preventDefault();

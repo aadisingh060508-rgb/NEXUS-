@@ -1,5 +1,5 @@
 import { useState } from 'react'
-
+import EmployeeActivityPanel from './EmployeeActivityPanel'
 export default function OverviewPage({ user, employees, onViewEmployee, logs = [] }) {
   const [selectedEventType, setSelectedEventType] = useState('all')
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all')
@@ -75,56 +75,18 @@ export default function OverviewPage({ user, employees, onViewEmployee, logs = [
         </div>
       </section>
 
-      {/* Recent Activity Section */}
-      <section className="admin-panel">
-        <div className="panel-head-row">
-          <h2>Recent Activity</h2>
-          <div className="filter-row compact" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {/* Employee Filter Dropdown */}
-            <select
-              className="filter-select"
-              value={selectedEmployeeFilter}
-              onChange={(e) => setSelectedEmployeeFilter(e.target.value)}
-              title="Filter by employee"
-            >
-              <option value="all">All Employees</option>
-              {uniqueEmployees.map(emp => (
-                <option key={emp} value={emp}>{emp}</option>
-              ))}
-            </select>
-
-            {/* Events List Filter Dropdown */}
-            <select
-              className="filter-select"
-              value={selectedEventType}
-              onChange={(e) => setSelectedEventType(e.target.value)}
-              title="Filter by event type"
-            >
-              <option value="all">All Events</option>
-              {uniqueEventTypes.map(t => (
-                <option key={t} value={t}>{t} Events</option>
-              ))}
-            </select>
+      {/* Employee Activity Feeds */}
+      <section className="admin-panel" style={{ padding: 0, backgroundColor: 'transparent', border: 'none', boxShadow: 'none', marginTop: '2rem' }}>
+        <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem', color: '#1e293b' }}>Employee Activity Feeds</h2>
+        {employees.length === 0 ? (
+          <p style={{ color: '#64748b', fontStyle: 'italic' }}>No employees connected yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {employees.map(emp => (
+              <EmployeeActivityPanel key={emp.id} employeeId={emp.id} employeeName={emp.name} />
+            ))}
           </div>
-        </div>
-        <div className="recent-activity-list">
-          {filteredActivity.length === 0 ? (
-            <div style={{ padding: '20px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No activity matching selected filters.</div>
-          ) : (
-            filteredActivity.map((row, i) => (
-              <div className="recent-activity-row" key={i}>
-                <span className="log-timestamp">{row.time}</span>
-                <span className="mini-avatar">{row.employee[0]}</span>
-                <span className="cell-strong">{row.employee}</span>
-                <span className="log-type-badge" data-type={row.type}>{row.type}</span>
-                <div className="recent-activity-file">
-                  <span className="employee-field-value">{row.file}</span>
-                  <span className="path-meta">{row.path}</span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        )}
       </section>
     </div>
   )

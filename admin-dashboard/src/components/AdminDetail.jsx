@@ -1,5 +1,5 @@
 import { useState } from 'react'
-
+import EmployeeActivityPanel from './EmployeeActivityPanel'
 export default function AdminDetail({
   user,
   tracking,
@@ -145,42 +145,12 @@ export default function AdminDetail({
       </section>
 
       {/* ── Recent Activity ── */}
-      <section className="admin-panel">
-        <div className="panel-head-row">
-          <h2>Recent Activity</h2>
-          <div className="filter-row compact">
-            <input
-              className="filter-input"
-              type="text"
-              placeholder="Search filename, path or employee."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <select className="filter-select" value={driveFilter} onChange={(e) => setDriveFilter(e.target.value)}>
-              <option value="all">All Drives</option>
-              {activityTypes.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-        </div>
-
-        {filteredActivity.length === 0 ? (
-          <p className="empty-inline-note">No matching activity recorded.</p>
-        ) : (
-          <div className="recent-activity-list">
-            {filteredActivity.map((row, i) => (
-              <div className="recent-activity-row" key={i}>
-                <span className="log-timestamp">{row.time}</span>
-                <span className="mini-avatar">{isMock ? displayName[0] : 'U'}</span>
-                <span className="cell-strong">{isMock ? displayName : 'Unknown Employee'}</span>
-                <span className="log-type-badge" data-type={row.type}>{row.type}</span>
-                <div className="recent-activity-file">
-                  <span className="employee-field-value">{row.file}</span>
-                  <span className="path-meta">{row.path}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <section className="admin-panel" style={{ padding: 0, backgroundColor: 'transparent', border: 'none', boxShadow: 'none' }}>
+        <h2 style={{ marginBottom: '1rem' }}>Activity Feed</h2>
+        <EmployeeActivityPanel 
+          employeeId={employee?.id} 
+          employeeName={displayName} 
+        />
       </section>
     </div>
   )

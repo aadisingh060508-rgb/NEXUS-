@@ -103,33 +103,70 @@ export default function App() {
     handleWsEvent,
   } = useDirectoryMonitor({ tracking, selectedEmployeeId: activeAgentEmployeeId })
 
+  const computeStatusAndLastActive = (lastSeenAt) => {
+    if (!lastSeenAt) return { status: 'offline', lastActive: 'Never' };
+    const date = new Date(lastSeenAt);
+    const diffSeconds = (new Date() - date) / 1000;
+    
+    let lastActive = 'Just now';
+    if (diffSeconds > 60) {
+      if (diffSeconds < 3600) {
+        lastActive = `${Math.floor(diffSeconds/60)} min ago`;
+      } else if (diffSeconds < 86400) {
+        lastActive = `${Math.floor(diffSeconds/3600)} hr ago`;
+      } else {
+        lastActive = date.toLocaleDateString();
+      }
+    }
+
+    return {
+      status: diffSeconds < 90 ? 'online' : 'offline',
+      lastActive
+    };
+  };
+
   // ── Fetch real employees linked to this admin ──
   const fetchConnectedEmployees = useCallback(async (adminId) => {
     const supabase = getSupabaseClient()
     if (!supabase || !adminId) return
     const { data, error } = await supabase
       .from('users')
-      .select('id, email, full_name, is_active')
+      .select('id, email, full_name, is_active, last_seen_at')
       .eq('admin_id', adminId)
     if (error) {
       console.warn('[Employees] fetch error:', error.message)
       return
     }
-    const mapped = (data || []).map((u) => ({
-      id: u.id,
-      name: u.full_name || u.email.split('@')[0],
-      role: 'Employee',
-      department: 'General',
-      device: `${(u.full_name || u.email.split('@')[0])}-Laptop`,
-      status: 'online',
-      lastActive: 'Just now',
-      events: 0,
-      paths: 0,
-      isReal: true,
-      email: u.email,
-    }))
+    const mapped = (data || []).map((u) => {
+      const { status, lastActive } = computeStatusAndLastActive(u.last_seen_at);
+      return {
+        id: u.id,
+        name: u.full_name || u.email.split('@')[0],
+        role: 'Employee',
+        department: 'General',
+        device: `${(u.full_name || u.email.split('@')[0])}-Laptop`,
+        status,
+        lastActive,
+        last_seen_at: u.last_seen_at, // keep for periodic re-eval
+        events: 0,
+        paths: 0,
+        isReal: true,
+        email: u.email,
+      }
+    })
     setConnectedEmployees(mapped)
   }, [])
+
+  // Periodically update the online/offline status purely on the client side
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setConnectedEmployees(prev => prev.map(emp => {
+        const { status, lastActive } = computeStatusAndLastActive(emp.last_seen_at);
+        return { ...emp, status, lastActive };
+      }));
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ── Subscribe to users table changes for live employee updates ──
   useEffect(() => {

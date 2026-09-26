@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
@@ -14,21 +15,63 @@ dotenv.config();
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey; // service key bypasses RLS for ack writes
-
-// Client used for Realtime subscription + ack write-backs.
-// We sign in with the employee credentials so RLS policies accept the UPDATE.
-const supabase = (supabaseUrl && supabaseAnonKey)
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null;
-
-// Service-role client for writing back acks without being blocked by RLS
-const supabaseService = (supabaseUrl && supabaseServiceKey)
-  ? createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } })
-  : null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── File-backed session storage adapter ──────────────────────────────────────
+const SESSION_FILE = path.join(__dirname, 'data', 'session.json');
+
+function ensureDataDir() {
+  const dir = path.dirname(SESSION_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function readSessionStore() {
+  try {
+    if (fs.existsSync(SESSION_FILE)) {
+      return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
+    }
+  } catch {
+    // corrupt file — start fresh
+  }
+  return {};
+}
+
+function writeSessionStore(store) {
+  ensureDataDir();
+  fs.writeFileSync(SESSION_FILE, JSON.stringify(store, null, 2), 'utf-8');
+}
+
+const fileStorage = {
+  getItem: (key) => {
+    const store = readSessionStore();
+    return store[key] ?? null;
+  },
+  setItem: (key, value) => {
+    const store = readSessionStore();
+    store[key] = value;
+    writeSessionStore(store);
+  },
+  removeItem: (key) => {
+    const store = readSessionStore();
+    delete store[key];
+    writeSessionStore(store);
+  },
+};
+
+// ── Single authenticated Supabase client ─────────────────────────────────────
+const supabase = (supabaseUrl && supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        storage: fileStorage,
+      },
+    })
+  : null;
 
 const app = express();
 app.use(cors());
@@ -38,7 +81,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 let monitorProcess = null;
 let isTracking = false;
-let activeEmployeeId = 'TEST-EMP-001';
+let activeEmployeeId = null;
+let heartbeatInterval = null;
 
 const directoryState = {
   available: new Map(),
@@ -141,6 +185,64 @@ function getNonSystemDrives() {
   return getConnectedDrives().filter((d) => !d.toUpperCase().startsWith(systemDrive));
 }
 
+// ── Helper: get authenticated employee id from Supabase session ──────────────
+async function getAuthenticatedUserId() {
+  if (!supabase) return null;
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return null;
+    return user.id;
+  } catch {
+    return null;
+  }
+}
+
+// ── Insert filesystem/USB event into employee_activity_logs ──────────────────
+async function insertActivityLog(event) {
+  if (!supabase) return;
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    console.warn('[Supabase] No authenticated session — cannot insert activity log.');
+    return;
+  }
+
+  const rawType = (event.type || '').toLowerCase();
+  const action = rawType === 'file_moved' ? 'move' : rawType;
+
+  const payload = {
+    user_id: userId,
+    action: action,
+    details: event,
+    device_id: event.device_id || null,
+    pen_drive_id: (rawType === 'pen_drive_insert' || rawType === 'pen_drive_eject' || event.isExternal)
+      ? (event.file || event.destination || 'EXTERNAL_USB')
+      : null,
+    source_path: event.source || event.source_path || null,
+    dest_path: event.destination || event.file || event.dest_path || null,
+    admin_notified: false,
+  };
+
+  try {
+    const { error } = await supabase
+      .from('employee_activity_logs')
+      .insert([payload]);
+
+    if (error) {
+      console.error('[Supabase] Failed to insert activity log:', error.message);
+    } else {
+      console.log(`[Supabase] Inserted activity log: ${action}`);
+    }
+  } catch (err) {
+    console.error('[Supabase] Exception inserting activity log:', err);
+  }
+}
+
+// ── Event types that should be persisted to Supabase ─────────────────────────
+const PERSISTABLE_EVENT_TYPES = new Set([
+  'create', 'copy', 'move', 'rename', 'delete', 'modify',
+  'pen_drive_insert', 'pen_drive_eject', 'file_moved',
+]);
+
 function attachMonitorListeners(proc) {
   const rl = createInterface({ input: proc.stdout });
   rl.on('line', (line) => {
@@ -194,6 +296,14 @@ function attachMonitorListeners(proc) {
       if (parsed.type && parsed.type !== 'INFO') {
         console.log(`[Event] ${parsed.type}: ${parsed.file || parsed.destination || ''}`);
         broadcast(trimmed);
+
+        // Persist filesystem/USB events to Supabase
+        const eventType = parsed.type.toLowerCase();
+        if (PERSISTABLE_EVENT_TYPES.has(eventType)) {
+          insertActivityLog(parsed).catch(err => {
+            console.error('[Supabase] Async insert error:', err);
+          });
+        }
       }
     } catch {
       console.log(`[Monitor raw] ${trimmed}`);
@@ -241,6 +351,23 @@ function startMonitor() {
       isTracking = true;
       broadcast({ type: 'STATUS', tracking: true });
       attachMonitorListeners(monitorProcess);
+
+      // Auto-watch default user directories
+      setTimeout(() => {
+        if (!monitorProcess || !monitorProcess.stdin.writable) return;
+        const homeDir = os.homedir();
+        const dirs = [
+          path.join(homeDir, 'Desktop'),
+          path.join(homeDir, 'Documents'),
+          path.join(homeDir, 'Pictures'),
+          path.join(homeDir, 'Downloads')
+        ];
+        dirs.forEach(d => {
+          monitorProcess.stdin.write(JSON.stringify({ action: 'watch', path: d }) + '\n');
+        });
+      }, 1000);
+
+
     } catch (err) {
       console.error('[Server] Exception spawning go run:', err);
       monitorProcess = null;
@@ -266,6 +393,21 @@ function startMonitor() {
     isTracking = true;
     broadcast({ type: 'STATUS', tracking: true });
     attachMonitorListeners(monitorProcess);
+
+    // Auto-watch default user directories
+    setTimeout(() => {
+      if (!monitorProcess || !monitorProcess.stdin.writable) return;
+      const homeDir = os.homedir();
+      const dirs = [
+        path.join(homeDir, 'Desktop'),
+        path.join(homeDir, 'Documents'),
+        path.join(homeDir, 'Pictures'),
+        path.join(homeDir, 'Downloads')
+      ];
+      dirs.forEach(d => {
+        monitorProcess.stdin.write(JSON.stringify({ action: 'watch', path: d }) + '\n');
+      });
+    }, 1000);
   } catch (err) {
     console.warn(`[Server] Exception spawning executable (${err.message}). Retrying with "go run"...`);
     trySpawnGoRun();
@@ -313,6 +455,75 @@ function sendCommand(action, targetPath, res) {
   });
 }
 
+// ── Heartbeat ────────────────────────────────────────────────────────────────
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatInterval = setInterval(async () => {
+    if (!supabase) return;
+    const userId = await getAuthenticatedUserId();
+    if (!userId) return;
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq('id', userId);
+      if (error) {
+        console.error('[Heartbeat] Update failed:', error.message);
+      }
+    } catch (err) {
+      console.error('[Heartbeat] Exception:', err);
+    }
+  }, 25000); // every 25 seconds
+  console.log('[Heartbeat] Started (every 25s)');
+}
+
+function stopHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    console.log('[Heartbeat] Stopped');
+  }
+}
+
+// ── Session bootstrap endpoint ───────────────────────────────────────────────
+app.post('/api/bootstrap-session', async (req, res) => {
+  const { access_token, refresh_token } = req.body;
+  if (!access_token || !refresh_token) {
+    return res.status(400).json({ success: false, error: 'access_token and refresh_token are required' });
+  }
+
+  if (!supabase) {
+    return res.status(500).json({ success: false, error: 'Supabase client not configured' });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.setSession({
+      access_token,
+      refresh_token,
+    });
+
+    if (error) {
+      console.error('[Bootstrap] setSession failed:', error.message);
+      return res.status(401).json({ success: false, error: error.message });
+    }
+
+    activeEmployeeId = data.user?.id || null;
+    console.log(`[Bootstrap] Session established for user: ${activeEmployeeId}`);
+
+    // Start heartbeat and monitoring now that we have a session
+    startHeartbeat();
+    if (!isTracking) startMonitor();
+
+    // Re-subscribe to agent commands with the authenticated session
+    subscribeToAgentCommands();
+
+    res.json({ success: true, userId: activeEmployeeId });
+  } catch (err) {
+    console.error('[Bootstrap] Exception:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/toggle', (_req, res) => {
   if (isTracking) stopMonitor();
   else startMonitor();
@@ -358,10 +569,11 @@ app.get('/api/watched-folders', (_req, res) => {
 
 app.post('/api/browser-activity', async (req, res) => {
   const { url, timestamp, page_title, domain } = req.body;
-  const employee_id = activeEmployeeId;
+  // Always use the authenticated session's user id — ignore any employee_id from request
+  const employee_id = await getAuthenticatedUserId();
 
   if (!employee_id || !url || !timestamp) {
-    return res.status(400).json({ success: false, error: 'Missing required fields' });
+    return res.status(400).json({ success: false, error: 'Missing required fields or no authenticated session' });
   }
 
   if (supabase) {
@@ -415,13 +627,17 @@ wss.on('connection', (ws) => {
 });
 
 function cleanup() {
+  stopHeartbeat();
   stopMonitor();
   process.exit(0);
 }
 
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
-process.on('exit', cleanup);
+process.on('exit', () => {
+  stopHeartbeat();
+  stopMonitor();
+});
 
 const BASE_PORT = 3001;
 
@@ -446,42 +662,41 @@ function startServer(port) {
 startServer(BASE_PORT);
 
 // ── Supabase Realtime: agent_commands subscription ───────────────────────────
-// The employee-agent signs in once with its own credentials, then subscribes
-// to agent_commands rows addressed to its employee_id.  When a command arrives
-// it executes the action locally (using the same spawn logic already here)
-// and writes status='done' + result back to the row so the admin dashboard
+// The employee-agent uses its authenticated session to subscribe to
+// agent_commands rows addressed to its employee_id.  When a command arrives
+// it executes the action locally and writes status='done' + result back.
 let agentCommandChannel = null;
+let isSubscribingToCommands = false;
 
 async function subscribeToAgentCommands() {
-  const realtimeClient = supabaseService || supabase;
-  if (!realtimeClient) {
+  if (!supabase) {
     console.warn('[AgentCommands] Supabase not configured — cloud relay disabled.');
     return;
   }
+  
+  if (isSubscribingToCommands) return;
+  isSubscribingToCommands = true;
 
-  // Remove existing channel if re-subscribing
-  if (agentCommandChannel) {
-    realtimeClient.removeChannel(agentCommandChannel);
-    agentCommandChannel = null;
+  try {
+    // Remove existing channel if re-subscribing
+    if (agentCommandChannel) {
+      await supabase.removeChannel(agentCommandChannel);
+      agentCommandChannel = null;
+    }
+
+  // Determine the employee ID from the authenticated session
+  const userId = await getAuthenticatedUserId();
+  if (userId) {
+    activeEmployeeId = userId;
   }
 
-  // (Note: Password sign-in logic removed. The agent backend now relies purely on
-  // the SUPABASE_SERVICE_ROLE_KEY to bypass RLS, and it gets its activeEmployeeId
-  // from the frontend GUI via /api/set-employee.)
-
-  if (process.env.EMPLOYEE_ID) {
-    activeEmployeeId = process.env.EMPLOYEE_ID;
+  if (!activeEmployeeId) {
+    console.warn('[AgentCommands] No authenticated session yet — standing by for /api/bootstrap-session.');
+    return;
   }
-
-  if (!activeEmployeeId || activeEmployeeId === 'TEST-EMP-001') {
-    console.warn('[AgentCommands] No valid activeEmployeeId configured yet — standing by for /api/set-employee.');
-  }
-
-  // Write-back helper — uses service role client if available, else anon
-  const ackClient = supabaseService || supabase;
 
   async function ackCommand(id, status, result = null) {
-    const { error } = await ackClient
+    const { error } = await supabase
       .from('agent_commands')
       .update({ status, result })
       .eq('id', id);
@@ -563,8 +778,9 @@ async function subscribeToAgentCommands() {
   }
 
   // Subscribe to new rows addressed to this employee
-  agentCommandChannel = realtimeClient
-    .channel(`agent-commands-${activeEmployeeId}`)
+  const uniqueChannelId = `agent-commands-${activeEmployeeId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  agentCommandChannel = supabase
+    .channel(uniqueChannelId)
     .on(
       'postgres_changes',
       {
@@ -584,8 +800,43 @@ async function subscribeToAgentCommands() {
       console.log(`[AgentCommands] Realtime subscription status for ${activeEmployeeId}:`, status);
     });
 
-  console.log(`[AgentCommands] Listening for commands on Supabase Realtime (Employee ID: ${activeEmployeeId}).`);
+    console.log(`[AgentCommands] Listening for commands on Supabase Realtime (Employee ID: ${activeEmployeeId}).`);
+  } catch (error) {
+    console.error('[AgentCommands] Error setting up realtime:', error);
+  } finally {
+    isSubscribingToCommands = false;
+  }
 }
 
-subscribeToAgentCommands();
+// ── Restore session on startup ───────────────────────────────────────────────
+async function restoreSessionOnStartup() {
+  if (!supabase) {
+    console.warn('[Startup] Supabase not configured — skipping session restore.');
+    return;
+  }
 
+  try {
+    // The Supabase client with file-backed storage will auto-restore the session
+    // from data/session.json via the storage adapter. We just need to check if
+    // there's an active session.
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error) {
+      console.warn('[Startup] Session restore error:', error.message);
+      return;
+    }
+
+    if (session?.user) {
+      activeEmployeeId = session.user.id;
+      console.log(`[Startup] Restored session for user: ${activeEmployeeId} (${session.user.email})`);
+      startHeartbeat();
+      if (!isTracking) startMonitor();
+      subscribeToAgentCommands();
+    } else {
+      console.log('[Startup] No existing session found — waiting for /api/bootstrap-session.');
+    }
+  } catch (err) {
+    console.warn('[Startup] Session restore exception:', err);
+  }
+}
+
+restoreSessionOnStartup();

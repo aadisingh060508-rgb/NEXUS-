@@ -5,7 +5,6 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   const urlObj = new URL(details.url);
 
   const activity = {
-    employee_id: "TEST-EMP-001",
     url: details.url,
     domain: urlObj.hostname,
     page_title: "", // Title is not always available in webNavigation, but we send the field
@@ -29,4 +28,4 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   .catch(error => {
     console.log(`Failed to send activity:\nBackend unavailable at http://localhost:3001`);
   });
-});
+});
