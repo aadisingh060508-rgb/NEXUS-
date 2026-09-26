@@ -5,15 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-      '/ws': {
-        target: 'ws://localhost:3001',
-        ws: true,
-      },
-    },
+    // Note: /ws and /api proxy to localhost:3001 have been removed.
+    // The admin dashboard talks to the remote employee agent via Supabase Realtime,
+    // not a local WebSocket proxy. Only add this proxy back if running the
+    // employee-agent on the SAME machine as the admin dashboard.
   },
 })
+

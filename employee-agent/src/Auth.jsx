@@ -95,6 +95,14 @@ export default function Auth({ onAuthSuccess }) {
         if (data?.user && !data?.session) {
           setInfoMsg('Sign Up successful! Please check your email for confirmation.')
         } else if (data?.session) {
+          // Ensure user exists in public.users table
+          await supabase.from('users').upsert({ 
+            id: data.session.user.id, 
+            email: data.session.user.email,
+            full_name: data.session.user.email.split('@')[0],
+            is_active: true
+          }, { onConflict: 'id' }).catch(() => {});
+          
           setInfoMsg('Account created successfully!')
           if (onAuthSuccess) onAuthSuccess(data.session.user)
         }
@@ -106,6 +114,14 @@ export default function Auth({ onAuthSuccess }) {
         if (error) throw error
 
         if (data?.session) {
+          // Ensure user exists in public.users table
+          await supabase.from('users').upsert({ 
+            id: data.session.user.id, 
+            email: data.session.user.email,
+            full_name: data.session.user.email.split('@')[0],
+            is_active: true
+          }, { onConflict: 'id' }).catch(() => {});
+          
           if (onAuthSuccess) onAuthSuccess(data.session.user)
         }
       }

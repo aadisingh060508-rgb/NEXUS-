@@ -90,6 +90,7 @@ type FileMonitor struct {
 	watchedRoots   map[string]string    // normalized key -> display path
 	availableRoots map[string]DirectoryRoot
 	systemDrive    string
+	policyEngine   *LocalPolicyEngine
 }
 
 func initConsole() {
@@ -136,18 +137,57 @@ func getTimestamp() string {
 	return time.Now().Format("2006-01-02 15:04:05")
 }
 
-// isNoiseFile filters out temporary system, lock, and log files
+// isNoiseFile filters out temporary system, lock, browser-cache and log files
 func isNoiseFile(path string) bool {
 	name := strings.ToLower(filepath.Base(path))
+	ext := strings.ToLower(filepath.Ext(name))
 	return strings.HasPrefix(name, "~$") ||
 		strings.HasPrefix(name, ".~") ||
+		strings.HasPrefix(name, "tmp") ||
 		strings.HasSuffix(name, ".tmp") ||
 		strings.HasSuffix(name, ".log") ||
 		strings.HasSuffix(name, ".crdownload") ||
 		strings.HasSuffix(name, ".part") ||
+		strings.HasSuffix(name, ".db-wal") ||
+		strings.HasSuffix(name, ".db-shm") ||
+		ext == ".ldb" ||
+		ext == ".sst" ||
 		name == "desktop.ini" ||
 		name == "thumbs.db" ||
-		name == ".ds_store"
+		name == ".ds_store" ||
+		name == "lock" ||
+		name == "lockfile"
+}
+
+// browserNoiseDirs is the set of directory names (lowercased) that are internal
+// to browsers or system applications and should never be watched.
+var browserNoiseDirs = map[string]bool{
+	// Chromium / Edge / Chrome internals
+	"cache": true, "cache2": true, "code cache": true, "gpucache": true,
+	"shorlisted apps": true, "shaderdata": true, "networkeventlog": true,
+	"segmentation platform": true, "optimization guide hints store": true,
+	"graphitedawg": true, "pnacltest": true, "pepper data": true,
+	"zxcvbn-data": true, "shared workers": true, "service worker": true,
+	// Firefox
+	"startupCache": true, "thumbnails": true, "safebrowsing": true,
+	// Generic browser / app data noise
+	"crashreports": true, "crashpad": true, "crashlogs": true,
+	"logs": true, "log": true,
+}
+
+// isBrowserCachePath returns true when the path is inside a known browser/app-data cache subtree.
+func isBrowserCachePath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	// Generic catch-all: anything under AppData is application-internal noise
+	// (browser caches, app configs, temp files, etc.) — not user file activity.
+	if strings.Contains(lower, "/appdata/") {
+		return true
+	}
+	// Windows temp directories
+	if strings.Contains(lower, "/windows/temp/") || strings.Contains(lower, "/windows/prefetch/") {
+		return true
+	}
+	return false
 }
 
 // shouldSkipDir skips system/noise directories during recursive watching
@@ -157,10 +197,21 @@ func shouldSkipDir(name string) bool {
 	case "node_modules", "vendor", "$recycle.bin", "system volume information",
 		"recovery", "windows", "program files", "program files (x86)",
 		"programdata", "perflogs", "msocache", "config.msi",
-		"boot", "mingw", "go", ".git":
+		"boot", "mingw", "go", ".git",
+		// AppData entirely — contains only app-internal files, not user files
+		"appdata",
+		// Browser / app cache subdirectories
+		"cache", "cache2", "code cache", "gpucache", "crashpad", "crashreports",
+		"crashlogs", "logs", "safebrowsing", "thumbnails", "temp",
+		// Windows system noise
+		"prefetch", "softwaredistribution", "winsxs", "assembly":
 		return true
 	}
 	if strings.HasPrefix(name, ".") && len(name) > 1 {
+		return true
+	}
+	// Skip known browser-noise directory names
+	if browserNoiseDirs[lower] {
 		return true
 	}
 	return false
@@ -238,6 +289,10 @@ func NewFileMonitor() (*FileMonitor, error) {
 		systemDrive = "C:"
 	}
 
+	store := &JSONPolicyStore{FilePath: "data/policy-config.json"}
+	enforcement := &MockEnforcementClient{}
+	engine := NewLocalPolicyEngine(store, enforcement)
+
 	return &FileMonitor{
 		watcher:         watcher,
 		fileCache:       make(map[string]*FileMetadata),
@@ -250,6 +305,7 @@ func NewFileMonitor() (*FileMonitor, error) {
 		watchedRoots:    make(map[string]string),
 		availableRoots:  make(map[string]DirectoryRoot),
 		systemDrive:     systemDrive,
+		policyEngine:    engine,
 	}, nil
 }
 
@@ -312,6 +368,11 @@ func (m *FileMonitor) StartEventLoop() {
 func (m *FileMonitor) handleEvent(event fsnotify.Event) {
 	path := event.Name
 	if isNoiseFile(path) {
+		return
+	}
+
+	// Skip events from browser/app cache and temp directories
+	if isBrowserCachePath(path) {
 		return
 	}
 

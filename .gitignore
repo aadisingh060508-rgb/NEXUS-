@@ -3,3 +3,6 @@ node_modules/
 .env.*
 !.env.example
 *.exe
+employee-agent/data/session.json
+*.zip
+.vscode/

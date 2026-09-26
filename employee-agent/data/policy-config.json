@@ -1,0 +1,11 @@
+{
+  "D:\\": {
+    "deviceId": "USB-D:",
+    "driveLetter": "D:\\",
+    "status": "PENDING",
+    "allowPcToUsb": false,
+    "allowUsbToPc": false,
+    "policyVersion": 1,
+    "updatedAt": "2026-08-29T09:48:52.9116232+05:30"
+  }
+}

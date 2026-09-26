@@ -1,14 +1,33 @@
+/**
+ * useDirectoryMonitor.js
+ *
+ * Replaces all direct LAN /api/... fetch calls with Supabase-relayed
+ * agent_commands rows.  The admin dashboard inserts a command; the
+ * employee-agent (on a remote laptop) picks it up via Realtime, executes
+ * it locally, then writes back status='done' + result.  ACKs come back to
+ * the dashboard through the existing WebSocket broadcast that the agent
+ * still sends to all locally-connected WS clients — those reach the dashboard
+ * via the Supabase Realtime broadcast channel the agent publishes to.
+ *
+ * For watch/unwatch the local WS flow still works when the agent and dashboard
+ * happen to be on the same machine; when they are on different machines the
+ * command goes via Supabase and the ACK arrives via the agent_commands result
+ * subscription.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { groupDirectories, isWatched, normalizePath, pathKey } from '../components/directory-monitor/directoryUtils';
+import { sendAgentCommand, subscribeToCommandResult } from '../supabaseLog';
 
-const ACK_TIMEOUT_MS = 15000;
+const ACK_TIMEOUT_MS = 20000; // slightly longer to account for cloud round-trip
 
-export function useDirectoryMonitor({ tracking }) {
+export function useDirectoryMonitor({ tracking, selectedEmployeeId }) {
   const [directories, setDirectories] = useState([]);
-  const [watched, setWatched] = useState(new Set());
-  const [pending, setPending] = useState(new Map());
-  const [errors, setErrors] = useState(new Map());
+  const [watched, setWatched]         = useState(new Set());
+  const [pending, setPending]         = useState(new Map());
+  const [errors, setErrors]           = useState(new Map());
   const pendingTimers = useRef(new Map());
+
+  // ── pending / error helpers ───────────────────────────────────────────────
 
   const clearPendingTimer = useCallback((key) => {
     const timer = pendingTimers.current.get(key);
@@ -40,6 +59,8 @@ export function useDirectoryMonitor({ tracking }) {
 
     pendingTimers.current.set(key, timer);
   }, [clearPendingTimer]);
+
+  // ── WS event handlers (still used when agent is local) ───────────────────
 
   const handleDirectorySnapshot = useCallback((dirs) => {
     setDirectories(Array.isArray(dirs) ? dirs : []);
@@ -76,7 +97,7 @@ export function useDirectoryMonitor({ tracking }) {
   }, []);
 
   const handleCommandAck = useCallback((ack) => {
-    const keyPath = pathKey(ack.path);
+    const keyPath  = pathKey(ack.path);
     const keyCanon = pathKey(ack.canonicalPath);
     clearPendingTimer(keyPath);
     if (keyCanon) clearPendingTimer(keyCanon);
@@ -101,7 +122,7 @@ export function useDirectoryMonitor({ tracking }) {
       } else if (ack.action === 'unwatch') {
         setWatched((prev) => {
           const next = new Set(prev);
-          if (ack.path) next.delete(normalizePath(ack.path));
+          if (ack.path)         next.delete(normalizePath(ack.path));
           if (ack.canonicalPath) next.delete(normalizePath(ack.canonicalPath));
           return next;
         });
@@ -112,63 +133,58 @@ export function useDirectoryMonitor({ tracking }) {
     }
   }, [clearPendingTimer]);
 
+  /** Called by App.jsx for every incoming WS message */
   const handleWsEvent = useCallback((event) => {
     switch (event.type) {
-      case 'DIRECTORY_SNAPSHOT':
-        handleDirectorySnapshot(event.directories);
-        break;
-      case 'DIRECTORY_ADDED':
-        handleDirectoryAdded(event.directory);
-        break;
-      case 'DIRECTORY_REMOVED':
-        handleDirectoryRemoved(event.path);
-        break;
-      case 'WATCHED_FOLDERS':
-        handleWatchedFolders(event.folders);
-        break;
-      case 'COMMAND_ACK':
-        handleCommandAck(event);
-        break;
-      default:
-        break;
+      case 'DIRECTORY_SNAPSHOT': handleDirectorySnapshot(event.directories); break;
+      case 'DIRECTORY_ADDED':    handleDirectoryAdded(event.directory);       break;
+      case 'DIRECTORY_REMOVED':  handleDirectoryRemoved(event.path);          break;
+      case 'WATCHED_FOLDERS':    handleWatchedFolders(event.folders);         break;
+      case 'COMMAND_ACK':        handleCommandAck(event);                     break;
+      default: break;
     }
   }, [handleCommandAck, handleDirectoryAdded, handleDirectoryRemoved, handleDirectorySnapshot, handleWatchedFolders]);
 
+  // ── Boot: ask agent for current state whenever employee is selected ─────────
+  // We send a 'get_status' command via Supabase. The agent replies with
+  // directories and watchedFolders in the result payload.
   useEffect(() => {
-    if (!tracking) return;
+    if (!selectedEmployeeId) return;  // no employee selected yet
 
-    fetch('/api/directories')
-      .then((r) => r.json())
-      .then((data) => handleDirectorySnapshot(data.directories))
-      .catch(() => {});
+    sendAgentCommand({
+      employeeId: selectedEmployeeId,
+      command: 'get_status',
+    })
+    .then((cmdRow) => {
+      const unsub = subscribeToCommandResult(cmdRow.id, ({ status, result }) => {
+        if (status === 'done' || status === 'error') {
+          unsub();
+          if (status === 'done' && result) {
+            if (Array.isArray(result.directories)) handleDirectorySnapshot(result.directories);
+            if (Array.isArray(result.watchedFolders)) handleWatchedFolders(result.watchedFolders);
+            // Sync tracking state if the result includes it
+          }
+        }
+      });
+    })
+    .catch((err) => {
+      console.warn('[DirectoryMonitor] get_status command failed:', err.message);
+    });
+  }, [selectedEmployeeId, handleDirectorySnapshot, handleWatchedFolders]);
 
-    fetch('/api/watched-folders')
-      .then((r) => r.json())
-      .then((data) => handleWatchedFolders(data.folders))
-      .catch(() => {});
-  }, [tracking, handleDirectorySnapshot, handleWatchedFolders]);
-
+  // ── Toggle a single directory via Supabase relay ─────────────────────────
   const toggleDirectory = useCallback(async (dir, enable) => {
-    if (!tracking) return;
+    if (!tracking || !selectedEmployeeId) return;
     const action = enable ? 'watch' : 'unwatch';
     setPendingAction(dir.path, action);
 
+    let cmdRow;
     try {
-      const res = await fetch(`/api/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: dir.path }),
+      cmdRow = await sendAgentCommand({
+        employeeId: selectedEmployeeId,
+        command: action,
+        payload: { path: dir.path },
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        clearPendingTimer(pathKey(dir.path));
-        setPending((prev) => {
-          const next = new Map(prev);
-          next.delete(pathKey(dir.path));
-          return next;
-        });
-        setErrors((prev) => new Map(prev).set(pathKey(dir.path), data.error || 'Request failed'));
-      }
     } catch (err) {
       clearPendingTimer(pathKey(dir.path));
       setPending((prev) => {
@@ -176,12 +192,27 @@ export function useDirectoryMonitor({ tracking }) {
         next.delete(pathKey(dir.path));
         return next;
       });
-      setErrors((prev) => new Map(prev).set(pathKey(dir.path), err.message || 'Network error'));
+      setErrors((prev) => new Map(prev).set(pathKey(dir.path), err.message || 'Failed to send command'));
+      return;
     }
-  }, [tracking, setPendingAction, clearPendingTimer]);
 
-  const grouped = groupDirectories(directories);
+    // Subscribe to the Supabase ACK (agent writes result back to this row)
+    const unsub = subscribeToCommandResult(cmdRow.id, ({ status, result }) => {
+      if (status === 'done' || status === 'error') {
+        unsub();
+        // Synthesise a COMMAND_ACK event so existing UI logic handles it
+        handleCommandAck({
+          action,
+          path: dir.path,
+          canonicalPath: result?.canonicalPath || dir.path,
+          success: status === 'done',
+          error: result?.error || (status === 'error' ? 'Agent reported error' : undefined),
+        });
+      }
+    });
+  }, [tracking, selectedEmployeeId, setPendingAction, clearPendingTimer, handleCommandAck]);
 
+  const grouped      = groupDirectories(directories);
   const isDirWatched = useCallback((dirPath) => isWatched(dirPath, watched), [watched]);
 
   return {

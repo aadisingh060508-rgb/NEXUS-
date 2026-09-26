@@ -50,11 +50,22 @@ export default function Sidebar({ view, onNavigate }) {
         </button>
       </nav>
 
-      <button className="sidebar-icon-btn sidebar-info-btn" title="About" aria-label="About" disabled>
+      <button 
+        className="sidebar-icon-btn sidebar-info-btn" 
+        title="Sign Out" 
+        aria-label="Sign Out" 
+        onClick={() => {
+          // Fire a custom event that App.jsx can listen to, or we can just clear local storage and reload
+          window.localStorage.removeItem('supabase_anon_key');
+          window.localStorage.removeItem('supabase_url');
+          window.dispatchEvent(new Event('trigger-signout'));
+        }}
+        style={{ marginTop: 'auto' }}
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="16" x2="12" y2="12" />
-          <line x1="12" y1="8" x2="12.01" y2="8" />
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
         </svg>
       </button>
     </aside>

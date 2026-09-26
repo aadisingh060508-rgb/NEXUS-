@@ -45,8 +45,6 @@ export default function AdminDetail({
         Back
       </button>
 
-      <span className="section-marker"><span className="marker-index">/05</span> DEVICE_DETAIL</span>
-
       {/* ── User Card ── */}
       <div className="admin-user-card">
         <div className="admin-avatar">{initials}</div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Auth from './Auth'
 import { getSupabaseClient } from './supabaseClient'
-import { logActivity, fetchActivityLogs, clearActivityLogs, setStoredUserUuid } from './supabaseLog'
+import { logActivity, fetchActivityLogs, clearActivityLogs, setStoredUserUuid, fetchBrowserActivityLogs, sendAgentCommand, subscribeToCommandResult } from './supabaseLog'
 import DirectoryMonitor from './components/directory-monitor/DirectoryMonitor'
 import { useDirectoryMonitor } from './hooks/useDirectoryMonitor'
 import Sidebar from './components/Sidebar'
@@ -25,7 +25,8 @@ const EVENT_TYPES = [
   'delete',
   'modify',
   'pen_drive_insert',
-  'pen_drive_eject'
+  'pen_drive_eject',
+  'browser_activity'
 ]
 
 const STAT_LABELS = {
@@ -37,6 +38,7 @@ const STAT_LABELS = {
   modify: 'Modifies',
   pen_drive_insert: 'USB In',
   pen_drive_eject: 'USB Out',
+  browser_activity: 'Browsing',
 }
 
 const getInitialStats = () => ({
@@ -49,6 +51,7 @@ const getInitialStats = () => ({
   modify: 0,
   pen_drive_insert: 0,
   pen_drive_eject: 0,
+  browser_activity: 0,
 })
 
 export default function App() {
@@ -56,9 +59,10 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
 
   const [tracking, setTracking] = useState(false)
-  const [connected, setConnected] = useState(false)
+  const [connected, setConnected] = useState(false)   // true = Supabase Realtime is live
   const [reconnecting, setReconnecting] = useState(false)
   const [logs, setLogs] = useState([])
+  const [browserLogs, setBrowserLogs] = useState([])
   const [connectedDrives, setConnectedDrives] = useState([]) // currently plugged drives (display only)
   const [stats, setStats] = useState(getInitialStats())
   const [bumpKey, setBumpKey] = useState(null)
@@ -66,6 +70,7 @@ export default function App() {
 
   const [view, setView] = useState('overview')
   const [selectedEmployee, setSelectedEmployee] = useState(null)
+  const [connectedEmployees, setConnectedEmployees] = useState([])
 
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
@@ -76,6 +81,26 @@ export default function App() {
   const toastTimer = useRef(null)
   const recentEventsRef = useRef(new Map())
 
+  // The employee whose agent is currently being controlled
+  // (selectedEmployee is set when admin opens a specific employee's dashboard)
+  const activeAgentEmployeeId = selectedEmployee?.id ?? null
+
+  // ── Supabase connectivity → drives the CONNECTED badge ──
+  useEffect(() => {
+    const supabase = getSupabaseClient()
+    if (!supabase) return
+    const checkConn = () => {
+      // In supabase-js v2, use the isConnected() method on the realtime client
+      const isLive = typeof supabase.realtime?.isConnected === 'function' 
+        ? supabase.realtime.isConnected() 
+        : false
+      setConnected(isLive)
+    }
+    const id = setInterval(checkConn, 2000)
+    checkConn()
+    return () => clearInterval(id)
+  }, [])
+
   const {
     grouped,
     pending,
@@ -83,7 +108,58 @@ export default function App() {
     isDirWatched,
     toggleDirectory,
     handleWsEvent,
-  } = useDirectoryMonitor({ tracking })
+  } = useDirectoryMonitor({ tracking, selectedEmployeeId: activeAgentEmployeeId })
+
+  // ── Fetch real employees linked to this admin ──
+  const fetchConnectedEmployees = useCallback(async (adminId) => {
+    const supabase = getSupabaseClient()
+    if (!supabase || !adminId) return
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, email, full_name, is_active')
+      .eq('admin_id', adminId)
+    if (error) {
+      console.warn('[Employees] fetch error:', error.message)
+      return
+    }
+    const mapped = (data || []).map((u) => ({
+      id: u.id,
+      name: u.full_name || u.email.split('@')[0],
+      role: 'Employee',
+      department: 'General',
+      device: `${(u.full_name || u.email.split('@')[0])}-Laptop`,
+      status: 'online',
+      lastActive: 'Just now',
+      events: 0,
+      paths: 0,
+      isReal: true,
+      email: u.email,
+    }))
+    setConnectedEmployees(mapped)
+  }, [])
+
+  // ── Subscribe to users table changes for live employee updates ──
+  useEffect(() => {
+    if (!user?.id) return
+    const supabase = getSupabaseClient()
+    if (!supabase) return
+
+    fetchConnectedEmployees(user.id)
+
+    const channel = supabase
+      .channel('connected-employees')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'users',
+        filter: `admin_id=eq.${user.id}`,
+      }, () => {
+        fetchConnectedEmployees(user.id)
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [user?.id, fetchConnectedEmployees])
 
   // ── Show Toast Notification (Upper Middle) ──
   const showToast = useCallback((type, title, desc) => {
@@ -139,6 +215,20 @@ export default function App() {
         }
       })
       setStats(initial)
+      
+      // Fetch Browser logs
+      try {
+        const bRows = await fetchBrowserActivityLogs();
+        const formattedBrowser = bRows.map(row => ({
+          ...row,
+          type: 'browser_activity',
+          timestamp: new Date(row.visited_at).toLocaleString()
+        }));
+        setBrowserLogs(formattedBrowser);
+      } catch (err) {
+        console.warn('Could not load browser logs:', err);
+      }
+      
     } catch (err) {
       console.warn('Could not load activity logs from Supabase:', err.message || err)
     }
@@ -158,6 +248,14 @@ export default function App() {
       setStoredUserUuid(u?.id ?? null)
       setAuthLoading(false)
       if (u?.id) {
+        supabase.from('users').upsert({
+          id: u.id,
+          email: u.email,
+          full_name: u.email ? u.email.split('@')[0] : 'Admin',
+          role: 'admin',
+          is_active: true
+        }, { onConflict: 'id' }).then(({ error }) => { if (error) console.warn('Admin profile upsert:', error.message) })
+
         loadLogsFromDb(u.id)
       }
     }).catch(() => {
@@ -170,6 +268,14 @@ export default function App() {
       setStoredUserUuid(nextUser?.id ?? null)
       setAuthLoading(false)
       if (nextUser?.id) {
+        supabase.from('users').upsert({
+          id: nextUser.id,
+          email: nextUser.email,
+          full_name: nextUser.email ? nextUser.email.split('@')[0] : 'Admin',
+          role: 'admin',
+          is_active: true
+        }, { onConflict: 'id' }).then(({ error }) => { if (error) console.warn('Admin profile upsert:', error.message) })
+
         loadLogsFromDb(nextUser.id)
       }
     })
@@ -242,31 +348,52 @@ export default function App() {
       return next.length > 500 ? next.slice(-500) : next
     })
 
-    // Persist event to Supabase DB (guarded by RLS)
-    logActivity({
-      action: rawType,
-      details: event,
-      source_path: event.source || null,
-      dest_path: event.destination || event.file || null,
-      device_id: typeof window !== 'undefined' ? window.location.hostname : null,
-      pen_drive_id: (type === 'pen_drive_insert' || type === 'pen_drive_eject' || event.isExternal) ? (event.file || event.destination || 'EXTERNAL_USB') : null
-    }).catch(err => {
-      console.warn('[Supabase Log] Auto-insert note:', err.message || err)
-    })
+    // Persist event to Supabase DB (guarded by RLS) if it's not a browser event
+    // Browser events are already persisted by the server directly.
+    if (type !== 'browser_activity') {
+      logActivity({
+        action: rawType,
+        details: event,
+        source_path: event.source || null,
+        dest_path: event.destination || event.file || null,
+        device_id: typeof window !== 'undefined' ? window.location.hostname : null,
+        pen_drive_id: (type === 'pen_drive_insert' || type === 'pen_drive_eject' || event.isExternal) ? (event.file || event.destination || 'EXTERNAL_USB') : null
+      }).catch(err => {
+        console.warn('[Supabase Log] Auto-insert note:', err.message || err)
+      })
+    } else {
+      setBrowserLogs(prev => {
+        const next = [newLogEntry, ...prev]
+        return next.length > 500 ? next.slice(0, 500) : next
+      })
+    }
   }, [isDuplicate, showToast])
 
   // ── WebSocket Connection for Live OS Events ──
+  // NOTE: WebSocket proxy to localhost:3001 has been removed from vite.config.js.
+  // The admin dashboard now communicates with the remote employee agent exclusively
+  // via Supabase Realtime (sendAgentCommand / subscribeToCommandResult).
+  // Uncomment this block AND restore the vite.config.js proxy ONLY if you run the
+  // employee-agent on the SAME machine as the admin dashboard.
   const connectWS = useCallback(() => {
     if (!user) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
+    const wsUrl = `${protocol}//${window.location.host}/ws`
+
+    // Check if the local agent WS endpoint is actually reachable before connecting.
+    // If there's no proxy configured, opening the socket will immediately fail.
+    let ws
+    try {
+      ws = new WebSocket(wsUrl)
+    } catch {
+      return // Not available — remote-only mode via Supabase
+    }
 
     ws.onopen = () => {
       reconnectAttempts.current = 0
       setConnected(true)
       setReconnecting(false)
-      fetch('/api/status').then(r => r.json()).then(d => setTracking(d.tracking)).catch(() => {})
     }
 
     ws.onmessage = (evt) => {
@@ -291,10 +418,17 @@ export default function App() {
 
     ws.onclose = () => {
       setConnected(false)
-      setReconnecting(true)
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000)
-      reconnectAttempts.current++
-      reconnectTimer.current = setTimeout(connectWS, delay)
+      // Only retry up to 2 times for local WS; remote control uses Supabase Realtime
+      if (reconnectAttempts.current < 2) {
+        setReconnecting(true)
+        const delay = Math.min(2000 * Math.pow(2, reconnectAttempts.current), 8000)
+        reconnectAttempts.current++
+        reconnectTimer.current = setTimeout(connectWS, delay)
+      } else {
+        // Give up on local WS — Supabase Realtime handles everything
+        setReconnecting(false)
+        reconnectAttempts.current = 0
+      }
     }
 
     ws.onerror = () => ws.close()
@@ -302,14 +436,11 @@ export default function App() {
   }, [user, processEvent, handleWsEvent])
 
   useEffect(() => {
-    if (user) {
-      connectWS()
-    } else {
-      if (wsRef.current) wsRef.current.close()
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-      setConnected(false)
-      setReconnecting(false)
-    }
+    // Local WS is disabled — admin communicates with agent via Supabase Realtime only.
+    // Uncomment connectWS() below ONLY when running the employee-agent on the same machine.
+    // if (user) {
+    //   connectWS()
+    // }
     return () => {
       if (wsRef.current) wsRef.current.close()
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
@@ -329,20 +460,50 @@ export default function App() {
     autoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
   }
 
-  // ── Toggle Tracking with Toast Notification ──
+  // ── Toggle Tracking via Supabase relay ──
+  // Sends a 'toggle_tracking' command row; the remote employee-agent picks it
+  // up via Realtime, executes start/stop locally, then writes back the result.
   const handleToggle = async () => {
+    if (!activeAgentEmployeeId) {
+      showToast('off', 'No Employee Selected', 'Open an employee\'s dashboard first to control their agent.')
+      return
+    }
     try {
-      const res = await fetch('/api/toggle', { method: 'POST' })
-      const data = await res.json()
-      setTracking(data.tracking)
+      const cmdRow = await sendAgentCommand({
+        employeeId: activeAgentEmployeeId,
+        command: 'toggle_tracking',
+      })
 
-      if (data.tracking) {
-        showToast('on', 'Tracking ON', 'Live file and pen drive monitoring is active.')
+      // Optimistically flip UI — the agent will confirm via STATUS ws event
+      const nextTracking = !tracking
+      setTracking(nextTracking)
+      if (nextTracking) {
+        showToast('on', 'Tracking ON', 'Command sent — agent is starting monitoring…')
       } else {
-        showToast('off', 'Tracking OFF', 'File monitoring paused.')
+        showToast('off', 'Tracking OFF', 'Command sent — agent is stopping monitoring…')
       }
+
+      // Subscribe for the definitive ACK from the agent
+      const unsub = subscribeToCommandResult(cmdRow.id, ({ status, result }) => {
+        if (status === 'done' || status === 'error') {
+          unsub()
+          if (status === 'done' && result?.tracking !== undefined) {
+            setTracking(result.tracking)
+            if (result.tracking) {
+              showToast('on', 'Tracking ON', 'Live file and pen drive monitoring is active.')
+            } else {
+              showToast('off', 'Tracking OFF', 'File monitoring paused.')
+            }
+          } else if (status === 'error') {
+            // Revert the optimistic update
+            setTracking(tracking)
+            showToast('off', 'Toggle Failed', result?.error || 'Agent reported an error.')
+          }
+        }
+      })
     } catch (e) {
       console.error('Toggle failed:', e)
+      showToast('off', 'Toggle Failed', 'Could not send command. Check Supabase connection.')
     }
   }
 
@@ -374,6 +535,12 @@ export default function App() {
     setStats(getInitialStats())
   }
 
+  useEffect(() => {
+    const onTriggerSignOut = () => handleSignOut();
+    window.addEventListener('trigger-signout', onTriggerSignOut);
+    return () => window.removeEventListener('trigger-signout', onTriggerSignOut);
+  }, [tracking]);
+
   // Initial Auth Loading Screen
   if (authLoading) {
     return (
@@ -389,8 +556,8 @@ export default function App() {
     return <Auth onAuthSuccess={(authenticatedUser) => setUser(authenticatedUser)} />
   }
 
-  const connectionState = connected ? 'connected' : reconnecting ? 'reconnecting' : 'disconnected'
-  const connectionLabel = connected ? 'Connected' : reconnecting ? 'Reconnecting...' : 'Disconnected'
+  const connectionState = connected ? 'connected' : 'disconnected'
+  const connectionLabel = connected ? 'Connected' : 'Supabase Offline'
 
   const monitoredPathsCount = grouped?.drives?.length || 1
   const lastActivity = logs.length ? (logs[logs.length - 1].timestamp || 'Just now') : '—'
@@ -407,13 +574,13 @@ export default function App() {
     paths: monitoredPathsCount,
     isReal: true,
   }
-  const allEmployees = [...MOCK_EMPLOYEES, realEmployee]
+  const allEmployees = [...MOCK_EMPLOYEES, ...connectedEmployees]
 
   const handleViewEmployee = (emp) => {
+    setSelectedEmployee(emp)
     if (emp.isReal) {
       setView('dashboard')
     } else {
-      setSelectedEmployee(emp)
       setView('admin')
     }
   }
@@ -445,7 +612,7 @@ export default function App() {
           <WebsiteMonitoring
             stats={MOCK_WEBSITE_STATS}
             activity={MOCK_WEBSITE_ACTIVITY}
-            recent={MOCK_RECENT_WEBSITE_ACTIVITY}
+            recent={browserLogs}
           />
         )}
 
@@ -496,7 +663,9 @@ export default function App() {
                   <polyline points="13 2 13 9 20 9"/>
                 </svg>
                 <div>
-                  <h1 style={{ textTransform: 'capitalize' }}>{(user?.email || 'User').split('@')[0]}</h1>
+                  <h1 style={{ textTransform: 'capitalize' }}>
+                    {selectedEmployee?.name || (selectedEmployee?.email || user?.email || 'User').split('@')[0]}
+                  </h1>
                   <span className="font-mono-label">FS_ACTIVITY_MONITOR</span>
                 </div>
               </div>
@@ -649,6 +818,21 @@ export default function App() {
                             <div className="log-trailing-info">
                               {event.size && <span className="log-size">{event.size}</span>}
                               {event.isExternal && <span className="usb-badge highlight">USB</span>}
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      if (type === 'BROWSER_ACTIVITY') {
+                        return (
+                          <div key={event.id} className="log-entry log-entry-single">
+                            <span className="log-timestamp">{event.timestamp}</span>
+                            <span className="log-type-badge" data-type={type}>BROWSE</span>
+
+                            <div className="log-path-card single-card" title={event.url}>
+                              <span className="path-chip target-chip" style={{ background: '#3b82f6', color: '#fff' }}>URL</span>
+                              <span className="path-text">{event.domain || event.url}</span>
+                              {event.page_title && <span className="path-meta">{event.page_title}</span>}
                             </div>
                           </div>
                         )

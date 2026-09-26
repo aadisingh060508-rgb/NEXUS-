@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Local Browser Monitor",
+  "version": "1.0.0",
+  "description": "Tracks browser navigation for local testing.",
+  "permissions": [
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

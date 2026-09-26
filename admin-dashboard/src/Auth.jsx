@@ -230,11 +230,11 @@ export default function Auth({ onAuthSuccess }) {
             <div className="auth-form-container">
               {/* Form Heading */}
               <div className="auth-panel-header">
-                <h2>{isSignUp ? 'Join Us' : 'Welcome Back'}</h2>
+                <h2>{isSignUp ? 'Create Admin' : 'Admin Login'}</h2>
                 <p>
                   {isSignUp
-                    ? 'Create your account to start tracking live file system activity.'
-                    : 'Log in with your credentials to access the monitoring dashboard.'}
+                    ? 'Register a new admin account to start tracking live file system activity.'
+                    : 'Enter your Admin ID and Access Code to access the monitoring dashboard.'}
                 </p>
               </div>
 
@@ -270,35 +270,38 @@ export default function Auth({ onAuthSuccess }) {
               {/* Form Fields */}
               <form onSubmit={handleAuth} className="auth-form">
                 <div className="form-group">
-                  <label>Email address</label>
+                  <label>Admin ID</label>
                   <input
                     type="email"
-                    placeholder="user@example.com"
+                    placeholder="admin@yourcompany.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="username"
                     required
                   />
                 </div>
 
                 <div className="form-group">
-                  <label>Password</label>
+                  <label>Access Code</label>
                   <input
                     type="password"
-                    placeholder="••••••••••••"
+                    placeholder="Enter your access code"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
                     required
                   />
                 </div>
 
                 {isSignUp && (
                   <div className="form-group">
-                    <label>Confirm Password</label>
+                    <label>Confirm Access Code</label>
                     <input
                       type="password"
-                      placeholder="••••••••••••"
+                      placeholder="Re-enter your access code"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      autoComplete="new-password"
                       required
                     />
                   </div>
@@ -308,10 +311,10 @@ export default function Auth({ onAuthSuccess }) {
                   {loading ? (
                     <span className="btn-loading">
                       <span className="spinner"></span>
-                      {isSignUp ? 'Creating Account...' : 'Logging In...'}
+                      {isSignUp ? 'Creating Account...' : 'Verifying...'}
                     </span>
                   ) : (
-                    isSignUp ? 'Continue & Register' : 'Continue'
+                    isSignUp ? 'Create Admin Account' : 'Access Dashboard'
                   )}
                 </button>
               </form>

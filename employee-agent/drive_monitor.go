@@ -66,6 +66,10 @@ func (m *FileMonitor) StartDriveMonitor() {
 				if dir.Removable {
 					ts := getTimestamp()
 					logMessage("\n[%s] %sPEN DRIVE INSERTED%s\n  Drive: %s\n", ts, colorMagenta, colorReset, dir.Path)
+
+					// Trigger Policy Engine
+					m.policyEngine.HandleUSBInsertion(dir.Path)
+
 					if jsonMode {
 						emitJSON(JSONEvent{
 							Type:        "pen_drive_insert",
@@ -132,6 +136,9 @@ func (m *FileMonitor) StartDriveMonitor() {
 				}
 
 				if wasRemovable {
+					// Trigger Policy Engine
+					m.policyEngine.HandleUSBRemoval(displayDrive)
+
 					logMessage("\n[%s] %sPEN DRIVE EJECTED%s\n  Drive: %s\n", ts, colorYellow, colorReset, displayDrive)
 					if jsonMode {
 						emitJSON(JSONEvent{

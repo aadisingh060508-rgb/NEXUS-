@@ -97,6 +97,33 @@ export async function fetchActivityLogs() {
 }
 
 /* -------------------------------------------------
+   5️⃣ Fetch browser activity logs.
+   Queries browser_activity_logs ordered by visited_at DESC (most recent first).
+   RLS ("scoped_select_browser_activity") restricts results server-side to the
+   caller's own connected employees — this query does NOT need to filter by
+   admin/employee client-side; Postgres already scopes it per the calling
+   admin's auth.uid(). Inserts are handled server-side by employee-agent
+   using the service role key.
+   ------------------------------------------------- */
+export async function fetchBrowserActivityLogs() {
+  const client = getSupabaseClient() || defaultSupabase
+  if (!client) {
+    throw new Error('Supabase client is not configured')
+  }
+
+  const { data, error } = await client
+    .from('browser_activity_logs')
+    .select('*')
+    .order('visited_at', { ascending: false })
+
+  if (error) {
+    console.error('❌ Supabase browser log fetch failed', error)
+    throw error
+  }
+  return data || []
+}
+
+/* -------------------------------------------------
    4️⃣ Clear / delete activity logs for the user.
    ------------------------------------------------- */
 export async function clearActivityLogs() {
@@ -119,4 +146,68 @@ export async function clearActivityLogs() {
   console.log(`✅ Cleared activity logs via RPC`)
   return data
 }
+
+/* -------------------------------------------------
+   6️⃣ Send a command to an employee agent via the
+      agent_commands cloud-relay table.
+      Returns the newly inserted row (with its id).
+   ------------------------------------------------- */
+export async function sendAgentCommand({ employeeId, command, payload = {} }) {
+  const client = getSupabaseClient() || defaultSupabase
+  if (!client) throw new Error('Supabase client is not configured')
+
+  const adminId = await ensureUserUuid()
+
+  const { data, error } = await client
+    .from('agent_commands')
+    .insert([{
+      employee_id: employeeId,
+      admin_id:    adminId,
+      command,
+      payload,
+      status: 'pending',
+    }])
+    .select()
+    .single()
+
+  if (error) {
+    console.error('❌ sendAgentCommand failed', error)
+    throw error
+  }
+  console.log(`✅ Command sent [${command}] → employee ${employeeId} (row ${data.id})`)
+  return data
+}
+
+/* -------------------------------------------------
+   7️⃣ Subscribe to a single command row's result.
+      Calls onResult({ status, result }) when the
+      employee agent updates the row.
+      Returns an unsubscribe function.
+   ------------------------------------------------- */
+export function subscribeToCommandResult(commandId, onResult) {
+  const client = getSupabaseClient() || defaultSupabase
+  if (!client) return () => {}
+
+  const channel = client
+    .channel(`cmd-result-${commandId}`)
+    .on(
+      'postgres_changes',
+      {
+        event:  'UPDATE',
+        schema: 'public',
+        table:  'agent_commands',
+        filter: `id=eq.${commandId}`,
+      },
+      (payload) => {
+        onResult({
+          status: payload.new.status,
+          result: payload.new.result,
+        })
+      }
+    )
+    .subscribe()
+
+  return () => { client.removeChannel(channel) }
+}
+
 

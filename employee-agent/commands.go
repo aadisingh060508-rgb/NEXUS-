@@ -10,8 +10,9 @@ import (
 
 // Command is a single instruction sent from server.js over stdin.
 type Command struct {
-	Action string `json:"action"`
-	Path   string `json:"path"`
+	Action string     `json:"action"`
+	Path   string     `json:"path"`
+	Policy *USBPolicy `json:"policy,omitempty"`
 }
 
 // CommandAck confirms a command was applied by the Go monitor.
@@ -51,11 +52,22 @@ func (m *FileMonitor) ListenForCommands() {
 			m.handleWatchCommand(cmd.Path)
 		case "unwatch":
 			m.handleUnwatchCommand(cmd.Path)
+		case "update_policy":
+			if cmd.Policy != nil {
+				m.policyEngine.SetPolicy(*cmd.Policy)
+				if jsonMode {
+					emitJSON2(CommandAck{Type: "COMMAND_ACK", Action: "update_policy", Success: true})
+				}
+			}
 		default:
 			if jsonMode {
 				emitJSON2(CommandAck{Type: "COMMAND_ACK", Action: cmd.Action, Path: cmd.Path, Success: false, Error: "unknown action"})
 			}
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logMessage("Error reading standard input: %v\n", err)
 	}
 }
 

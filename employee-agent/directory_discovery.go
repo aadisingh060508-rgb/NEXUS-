@@ -82,7 +82,7 @@ func driveDisplayName(root string, removable bool) string {
 	return "Drive (" + letter + ")"
 }
 
-func driveKind(root string, driveType uint32) (kind string, removable bool) {
+func driveKind(_ string, driveType uint32) (kind string, removable bool) {
 	switch driveType {
 	case windows.DRIVE_REMOVABLE, windows.DRIVE_CDROM:
 		return "removable", true
