@@ -5,31 +5,20 @@ export default function OverviewPage({ user, employees, onViewEmployee, logs = [
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all')
 
   const totalEmployees = employees.length
-  // Total events calculated from DB logs (each log row = 1 event) + employee event totals if applicable
-  const dbTotalEvents = logs.length
-  const mockTotalEvents = employees.reduce((n, e) => n + (e.events || 0), 0)
-  const displayTotalEvents = Math.max(dbTotalEvents, mockTotalEvents)
+  // Total events calculated strictly from real DB logs + employee event counts
+  const empTotalEvents = employees.reduce((n, e) => n + (e.events || 0), 0)
+  const displayTotalEvents = Math.max(logs.length, empTotalEvents)
 
   // Map DB logs to recent activity format
   const dbRecentActivity = logs.map(log => ({
     time: log.timestamp || 'Just now',
-    employee: (user?.email || 'Admin').split('@')[0],
+    employee: log.employee_name || log.employee || (user?.email || 'Admin').split('@')[0],
     type: (log.type || 'INFO').toUpperCase(),
     file: log.file || log.destination || log.source || 'File Event',
     path: log.source || log.destination || log.file || ''
   }))
 
-  // Fallback mock recent activity for visual demonstration if DB has few entries
-  const mockRecentActivity = [
-    { time: '12:17:55 am', employee: 'Priya Patil', type: 'CREATE', file: 'Screenshot 2026-08-27 001754.png', path: 'C:\\Users\\PRIYA\\Pictures\\Screenshots\\Screenshot 2026-08-27 001754.png' },
-    { time: '12:18:30 am', employee: 'Rahul Sharma', type: 'DELETE', file: 'Screenshot 2026-07-25 182720.png', path: 'C:\\Users\\RAHUL\\Pictures\\Screenshots\\Screenshot 2026-07-25 182720.png' },
-    { time: '12:25:40 am', employee: 'Amit Shah', type: 'COPY', file: 'test_copy.txt', path: 'C:\\Users\\AMIT\\Desktop\\ITR\\test_copy.txt' },
-    { time: '12:27:40 am', employee: 'Neha Gupta', type: 'MODIFY', file: 'Q3-forecast.xlsx', path: 'C:\\Users\\NEHA\\Documents\\Finance\\Q3-forecast.xlsx' },
-  ]
-
-  const combinedActivity = dbRecentActivity.length > 0 
-    ? [...dbRecentActivity.slice().reverse(), ...mockRecentActivity]
-    : mockRecentActivity
+  const combinedActivity = dbRecentActivity.slice().reverse()
 
   // Unique list of employees for filter dropdown
   const uniqueEmployees = Array.from(new Set(combinedActivity.map(a => a.employee)))

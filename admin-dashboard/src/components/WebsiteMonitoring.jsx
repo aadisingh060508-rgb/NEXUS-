@@ -23,17 +23,51 @@ function getRelativeTime(dateInput) {
   }
 }
 
-export default function WebsiteMonitoring({ stats, activity, recent }) {
+export default function WebsiteMonitoring({ stats: passedStats, activity: passedActivity, recent = [] }) {
   const [employeeFilter, setEmployeeFilter] = useState('all-emp');
 
+  // Compute live statistics directly from real database logs
+  const computedStats = useMemo(() => {
+    const totalVisits = recent.length;
+    const uniqueWebsites = new Set(recent.map(r => r.domain || r.site).filter(Boolean)).size;
+    const uniqueEmployees = new Set(recent.map(r => r.employee_id || r.employee).filter(Boolean)).size;
+    // Estimate browsing time (approx 3 min per visit)
+    const totalMinutes = totalVisits * 3;
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    const browsingTime = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+    return {
+      totalVisits,
+      activeWebsites: uniqueWebsites,
+      activeEmployees: uniqueEmployees,
+      browsingTime: totalVisits > 0 ? browsingTime : '0m',
+    };
+  }, [recent]);
+
+  const stats = (passedStats && passedStats.totalVisits > 0) ? passedStats : computedStats;
+
+  // Map recent logs to activity rows if passedActivity is empty
+  const liveActivity = useMemo(() => {
+    if (passedActivity && passedActivity.length > 0) return passedActivity;
+    return recent.map(r => ({
+      employee: r.employee_id || r.employee || 'Employee',
+      website: r.domain || r.site || r.url || 'Website',
+      browser: r.browser || 'Chrome',
+      activity: r.activity || 'visited',
+      time: r.time || (r.visited_at ? new Date(r.visited_at).toLocaleTimeString() : 'Just now'),
+      duration: r.duration || '1 min'
+    }));
+  }, [passedActivity, recent]);
+
   const employeeOptions = useMemo(() => {
-    const ids = new Set(recent.map(r => r.employee_id || r.employee || 'TEST-EMP-001').filter(Boolean));
+    const ids = new Set(recent.map(r => r.employee_id || r.employee).filter(Boolean));
     return Array.from(ids);
   }, [recent]);
 
   const filteredRecent = useMemo(() => {
     if (employeeFilter === 'all-emp') return recent;
-    return recent.filter(r => (r.employee_id || r.employee || 'TEST-EMP-001') === employeeFilter);
+    return recent.filter(r => (r.employee_id || r.employee) === employeeFilter);
   }, [recent, employeeFilter]);
 
   return (
@@ -64,15 +98,15 @@ export default function WebsiteMonitoring({ stats, activity, recent }) {
         </div>
         <div className="admin-stat-card">
           <span className="font-mono-label">Active Websites</span>
-          <span className="admin-stat-value">{stats.activeWebsites}</span>
+          <span className="admin-stat-value">{stats.activeWebsites || 0}</span>
         </div>
         <div className="admin-stat-card">
           <span className="font-mono-label">Active Employees</span>
-          <span className="admin-stat-value">{stats.activeEmployees}</span>
+          <span className="admin-stat-value">{stats.activeEmployees || 0}</span>
         </div>
         <div className="admin-stat-card">
           <span className="font-mono-label">Browsing Time</span>
-          <span className="admin-stat-value">{stats.browsingTime}</span>
+          <span className="admin-stat-value">{stats.browsingTime || '0m'}</span>
         </div>
       </div>
 
@@ -88,22 +122,28 @@ export default function WebsiteMonitoring({ stats, activity, recent }) {
               <span>Time</span>
               <span>Duration</span>
             </div>
-            {activity.map((row, i) => (
-              <div className="data-table-row six-col" key={i}>
-                <span className="cell-strong">{row.employee}</span>
-                <span>{row.website}</span>
-                <span>{row.browser}</span>
-                <span><span className={`status-dot-label ${row.activity === 'active' ? 'online' : row.activity === 'idle' ? 'warning' : ''}`}><span className="status-dot-inline" />{ACTIVITY_LABEL[row.activity]}</span></span>
-                <span>{row.time}</span>
-                <span>{row.duration}</span>
+            {liveActivity.length === 0 ? (
+              <div style={{ padding: '20px', color: '#64748b', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                No website activity recorded.
               </div>
-            ))}
+            ) : (
+              liveActivity.map((row, i) => (
+                <div className="data-table-row six-col" key={i}>
+                  <span className="cell-strong">{row.employee}</span>
+                  <span>{row.website}</span>
+                  <span>{row.browser}</span>
+                  <span><span className={`status-dot-label ${row.activity === 'active' ? 'online' : row.activity === 'idle' ? 'warning' : ''}`}><span className="status-dot-inline" />{ACTIVITY_LABEL[row.activity] || row.activity}</span></span>
+                  <span>{row.time}</span>
+                  <span>{row.duration}</span>
+                </div>
+              ))
+            )}
           </div>
         </section>
 
         <section className="admin-panel" style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)', border: '1px solid #f1f5f9' }}>
           <h2 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#1e293b', marginBottom: '8px', border: 'none', padding: 0 }}>Recent Activity</h2>
-          <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '24px' }}>Live feed of the latest browsing activity from this device (TEST-EMP-001)</p>
+          <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '24px' }}>Live feed of the latest browsing activity from monitored devices</p>
           
           <ul style={{ padding: 0, listStyle: 'none', margin: 0, position: 'relative' }}>
             {filteredRecent.length === 0 ? (

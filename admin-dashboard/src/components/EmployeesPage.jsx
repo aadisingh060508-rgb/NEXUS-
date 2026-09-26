@@ -147,51 +147,69 @@ export default function EmployeesPage({ employees, onViewEmployee }) {
       </div>
 
       <div className="employee-card-grid">
-        {filtered.map(emp => (
-          <div className="employee-card" key={emp.id}>
-            <div className="employee-card-head">
-              <div className="employee-avatar">{emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}</div>
-              <div className="employee-card-title">
-                <span className="employee-name">{emp.name}</span>
-                <span className="employee-role">{emp.role}</span>
-              </div>
-            </div>
-
-            <div className="employee-card-grid-fields">
-              <div className="employee-field">
-                <span className="font-mono-label">Employee ID</span>
-                <span className="employee-field-value mono-value">{emp.id}</span>
-              </div>
-              <div className="employee-field">
-                <span className="font-mono-label">Department</span>
-                <span className="employee-field-value">{emp.department}</span>
-              </div>
-              <div className="employee-field">
-                <span className="font-mono-label">Device</span>
-                <span className="employee-field-value">{emp.device}</span>
-              </div>
-              <div className="employee-field">
-                <span className="font-mono-label">Status</span>
-                <span className={`status-dot-label ${emp.status}`}>
-                  <span className="status-dot-inline" />
-                  {STATUS_LABEL[emp.status]}
-                </span>
-              </div>
-            </div>
-
-            <div className="employee-field last-active-field">
-              <span className="font-mono-label">Last Active</span>
-              <span className="employee-field-value">{emp.lastActive}</span>
-            </div>
-
-            <button className="view-monitoring-btn" onClick={() => onViewEmployee(emp)}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-              View Monitoring
-            </button>
+        {filtered.length === 0 ? (
+          <div style={{
+            gridColumn: '1 / -1',
+            padding: '3rem 2rem',
+            textAlign: 'center',
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            border: '1px dashed #cbd5e1',
+            color: '#64748b'
+          }}>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '0.75rem' }}>
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <h3 style={{ margin: '0 0 0.5rem', color: '#1e293b', fontSize: '1.05rem', fontWeight: 600 }}>No Employees Found</h3>
+            <p style={{ margin: 0, fontSize: '0.85rem' }}>No employee agents are currently connected. Click <strong>"Add Employee"</strong> above to invite and connect an employee device.</p>
           </div>
-        ))}
+        ) : (
+          filtered.map(emp => (
+            <div className="employee-card" key={emp.id}>
+              <div className="employee-card-head">
+                <div className="employee-avatar">{emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}</div>
+                <div className="employee-card-title">
+                  <span className="employee-name">{emp.name}</span>
+                  <span className="employee-role">{emp.role}</span>
+                </div>
+              </div>
+
+              <div className="employee-card-grid-fields">
+                <div className="employee-field">
+                  <span className="font-mono-label">Employee ID</span>
+                  <span className="employee-field-value mono-value">{emp.id}</span>
+                </div>
+                <div className="employee-field">
+                  <span className="font-mono-label">Department</span>
+                  <span className="employee-field-value">{emp.department}</span>
+                </div>
+                <div className="employee-field">
+                  <span className="font-mono-label">Device</span>
+                  <span className="employee-field-value">{emp.device}</span>
+                </div>
+                <div className="employee-field">
+                  <span className="font-mono-label">Status</span>
+                  <span className={`status-dot-label ${emp.status}`}>
+                    <span className="status-dot-inline" />
+                    {STATUS_LABEL[emp.status]}
+                  </span>
+                </div>
+              </div>
+
+              <div className="employee-field last-active-field">
+                <span className="font-mono-label">Last Active</span>
+                <span className="employee-field-value">{emp.lastActive}</span>
+              </div>
+
+              <button className="view-monitoring-btn" onClick={() => onViewEmployee(emp)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                </svg>
+                View Monitoring
+              </button>
+            </div>
+          ))
+        )}
       </div>
 
       {/* ── Add Employee Modal ── */}

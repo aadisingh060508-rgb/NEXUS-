@@ -9,13 +9,6 @@ import AdminDetail from './components/AdminDetail'
 import EmployeesPage from './components/EmployeesPage'
 import OverviewPage from './components/OverviewPage'
 import WebsiteMonitoring from './components/WebsiteMonitoring'
-import {
-  MOCK_EMPLOYEES,
-  MOCK_ACTIVITY_BY_EMPLOYEE,
-  MOCK_WEBSITE_STATS,
-  MOCK_WEBSITE_ACTIVITY,
-  MOCK_RECENT_WEBSITE_ACTIVITY,
-} from './mockData'
 
 const EVENT_TYPES = [
   'create',
@@ -574,20 +567,20 @@ export default function App() {
     paths: monitoredPathsCount,
     isReal: true,
   }
-  const allEmployees = [...MOCK_EMPLOYEES, ...connectedEmployees]
+  const allEmployees = connectedEmployees
 
   const handleViewEmployee = (emp) => {
     setSelectedEmployee(emp)
-    if (emp.isReal) {
-      setView('dashboard')
-    } else {
-      setView('admin')
-    }
+    setView('admin')
   }
 
-  const recentActivityFeed = [
-    ...(MOCK_ACTIVITY_BY_EMPLOYEE['emp-3'] || []).map(r => ({ ...r, employee: 'Priya Patil' })),
-  ].slice(0, 5)
+  const recentActivityFeed = logs.slice(0, 5).map(l => ({
+    time: l.timestamp || 'Just now',
+    employee: l.employee_name || l.employee || (user?.email || 'Admin').split('@')[0],
+    type: (l.type || 'INFO').toUpperCase(),
+    file: l.file || l.destination || l.source || 'File Event',
+    path: l.source || l.destination || l.file || ''
+  }))
 
   return (
     <div className="app-shell">
@@ -610,8 +603,6 @@ export default function App() {
 
         {view === 'website' && (
           <WebsiteMonitoring
-            stats={MOCK_WEBSITE_STATS}
-            activity={MOCK_WEBSITE_ACTIVITY}
             recent={browserLogs}
           />
         )}
@@ -619,7 +610,7 @@ export default function App() {
         {view === 'admin' && selectedEmployee && (
           <AdminDetail
             employee={selectedEmployee}
-            recentActivity={MOCK_ACTIVITY_BY_EMPLOYEE[selectedEmployee.id] || []}
+            recentActivity={logs}
             onBack={() => { setSelectedEmployee(null); setView('employees') }}
           />
         )}

@@ -15,25 +15,24 @@ export default function AdminDetail({
   const [driveFilter, setDriveFilter] = useState('all')
   const [search, setSearch] = useState('')
 
-  const isMock = Boolean(employee)
-  const displayName = isMock ? employee.name : (user?.email || 'admin').split('@')[0]
-  const initials = isMock
-    ? employee.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : displayName.slice(0, 2).toUpperCase()
-  const isOnline = isMock ? employee.status === 'online' : connected
-  const deviceName = isMock ? employee.device : `${displayName}-Laptop`
-  const totalEvents = isMock ? employee.events : stats.total
-  const pathsLabel = isMock ? `${employee.paths} paths` : `${monitoredPathsCount} ${monitoredPathsCount === 1 ? 'drive' : 'drives'}`
-  const activityIsOn = isMock ? employee.status !== 'offline' : tracking
+  const displayName = employee?.name || (user?.email || 'Admin').split('@')[0]
+  const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  const isOnline = employee?.status === 'online' || (connected ?? false)
+  const deviceName = employee?.device || employee?.device_id || `${displayName}-Device`
+  const totalEvents = employee?.events ?? (stats?.total || 0)
+  const pathsLabel = employee?.paths ? `${employee.paths} paths` : `${monitoredPathsCount || 1} drives`
+  const activityIsOn = employee ? employee.status === 'online' : (tracking ?? false)
 
   const filteredActivity = recentActivity.filter(row => {
     const matchesDrive = driveFilter === 'all' || row.type === driveFilter
     const q = search.trim().toLowerCase()
-    const matchesSearch = !q || row.file.toLowerCase().includes(q) || row.path.toLowerCase().includes(q)
+    const fileName = row.file || row.destination || row.source || ''
+    const filePath = row.path || row.source || ''
+    const matchesSearch = !q || fileName.toLowerCase().includes(q) || filePath.toLowerCase().includes(q)
     return matchesDrive && matchesSearch
   })
 
-  const activityTypes = [...new Set(recentActivity.map(r => r.type))]
+  const activityTypes = [...new Set(recentActivity.map(r => r.type).filter(Boolean))]
 
   return (
     <div className="admin-detail">
@@ -55,7 +54,7 @@ export default function AdminDetail({
               {isOnline ? 'Online' : 'Offline'}
             </span>
           </div>
-          <span className="admin-user-email">{isMock ? `${displayName.toLowerCase().replace(/\s+/g, '.')}@example.com` : user?.email}</span>
+          <span className="admin-user-email">{employee?.email || user?.email || 'N/A'}</span>
         </div>
         <div className="admin-user-meta">
           <div className="admin-meta-item">
@@ -64,7 +63,7 @@ export default function AdminDetail({
           </div>
           <div className="admin-meta-item">
             <span className="font-mono-label">Last Activity</span>
-            <span className="admin-meta-value">{isMock ? employee.lastActive : lastActivity}</span>
+            <span className="admin-meta-value">{employee?.lastActive || lastActivity || 'Just now'}</span>
           </div>
         </div>
       </div>
@@ -87,7 +86,7 @@ export default function AdminDetail({
         </div>
         <div className="admin-stat-card">
           <span className="font-mono-label">Last Activity</span>
-          <span className="admin-stat-value">{isMock ? employee.lastActive : lastActivity}</span>
+          <span className="admin-stat-value">{employee?.lastActive || lastActivity || 'Just now'}</span>
         </div>
       </div>
 
@@ -97,19 +96,19 @@ export default function AdminDetail({
         <div className="admin-info-grid">
           <div className="admin-info-cell">
             <span className="font-mono-label">Operating System</span>
-            <span className="admin-info-value">{isMock ? 'Windows 11 Pro' : 'Windows / Dev Laptop'}</span>
+            <span className="admin-info-value">{employee?.os || 'Windows 11'}</span>
           </div>
           <div className="admin-info-cell">
             <span className="font-mono-label">Agent Status</span>
-            <span className="admin-info-value">{isMock ? (isOnline ? 'Online' : 'Offline') : (tracking ? 'Online (Tracking)' : 'Online (Idle)')}</span>
+            <span className="admin-info-value">{isOnline ? 'Online (Active)' : 'Offline'}</span>
           </div>
           <div className="admin-info-cell">
             <span className="font-mono-label">Last Check-in</span>
-            <span className="admin-info-value">{isMock ? employee.lastActive : (connected ? 'Live' : 'Reconnecting')}</span>
+            <span className="admin-info-value">{employee?.lastActive || (connected ? 'Live' : 'Offline')}</span>
           </div>
           <div className="admin-info-cell">
             <span className="font-mono-label">Device ID</span>
-            <span className="admin-info-value mono-value">{isMock ? employee.id : 'localhost'}</span>
+            <span className="admin-info-value mono-value">{employee?.id || employee?.device_id || 'N/A'}</span>
           </div>
         </div>
       </section>
